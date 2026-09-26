@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app import db
 from app.main import app
+from app.models import AdminSession
 
 ADMIN = "111111111111111111"
 
@@ -15,6 +16,14 @@ def session_cookie(data: dict) -> str:
     # Starlette SessionMiddleware 와 같은 방식으로 서명한다
     signer = itsdangerous.TimestampSigner("x" * 48)
     return signer.sign(b64encode(json.dumps(data).encode())).decode()
+
+
+def admin_cookie(sid: str = "current") -> str:
+    """현재 세션으로 등록된 관리자 쿠키"""
+    with db.SessionLocal() as s:
+        s.merge(AdminSession(uid=int(ADMIN), sid=sid))
+        s.commit()
+    return session_cookie({"uid": ADMIN, "sid": sid})
 
 
 @pytest.fixture
@@ -35,14 +44,31 @@ def test_non_admin_session_is_403(client):
 
 
 def test_admin_can_read_and_state_change_needs_header(client):
-    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))
+    client.cookies.set("ktx_session", admin_cookie())
     assert client.get("/api/watches").status_code == 200
     assert client.get("/api/logs?level=WARNING").status_code == 200
     assert client.post("/api/watches/1/end").status_code == 403  # X-Requested-With 없음
 
 
+def test_only_latest_session_is_valid(client):
+    old = admin_cookie("old")
+    admin_cookie("new")  # 다시 로그인하면 이전 쿠키는 끊긴다
+    client.cookies.set("ktx_session", old)
+    assert client.get("/api/watches").status_code == 401
+    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))  # sid 없는 예전 쿠키
+    assert client.get("/api/watches").status_code == 401
+
+
+def test_logout_revokes_session(client):
+    cookie = admin_cookie()
+    client.cookies.set("ktx_session", cookie)
+    assert client.post("/auth/logout").status_code == 200
+    client.cookies.set("ktx_session", cookie)  # 로그아웃 전에 복사해 둔 쿠키
+    assert client.get("/api/watches").status_code == 401
+
+
 def test_map_returns_stations_lines_and_boundaries(client):
-    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))
+    client.cookies.set("ktx_session", admin_cookie())
     body = client.get("/api/map").json()
     assert body["stations"][0] == {"name": "서울", "lat": 37.5546, "lon": 126.9708, "label": "r", "major": True}
     assert body["lines"] and body["provinces"] and body["metros"] and isinstance(body["rank"], list)
@@ -62,7 +88,7 @@ def test_login_redirects_to_discord_with_state(client):
 
 
 def test_webhook_url_is_masked_in_responses(client):
-    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))
+    client.cookies.set("ktx_session", admin_cookie())
     h = {"X-Requested-With": "ktx"}
     url = "https://discord.com/api/webhooks/123456789012345678/secretTokenValue"
     r = client.post("/api/channels/webhook", json={"name": "가족", "url": url}, headers=h)
@@ -84,7 +110,7 @@ def test_watch_detail_lists_available_seats_and_viewer_ids_are_validated(client)
         s.add(WatchSeen(watch_id=w.id, dep_date="20260928", train_no="101", seats=["일반실"]))
         s.commit()
         wid = w.id
-    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))
+    client.cookies.set("ktx_session", admin_cookie())
     r = client.get(f"/api/watches/{wid}")
     assert r.status_code == 200 and r.json()["available"] == [{"date": "2026-09-28", "no": "101", "seats": ["일반실"]}]
     assert client.get("/api/watches/999").status_code == 404
@@ -112,7 +138,7 @@ def test_search_streams_each_page(client, monkeypatch):
 
     monkeypatch.setattr(scanner, "scan_pages", fake_pages)
     monkeypatch.setattr(state, "stations", ["서울", "부산"], raising=False)
-    client.cookies.set("ktx_session", session_cookie({"uid": ADMIN}))
+    client.cookies.set("ktx_session", admin_cookie())
     r = client.post("/api/trains/search", headers={"X-Requested-With": "ktx"}, json={
         "dep": "서울", "arr": "부산", "start": f"{day:%Y-%m-%dT00:00}", "end": f"{day:%Y-%m-%dT12:00}",
         "basis": "dep", "passengers": 1})

@@ -88,3 +88,12 @@ class WatchSeen(Base):
     dep_date: Mapped[str] = mapped_column(String(8))
     train_no: Mapped[str] = mapped_column(String(10))
     seats: Mapped[list] = mapped_column(JSON)
+
+
+class AdminSession(Base):
+    """관리자마다 유효한 세션 하나. 다시 로그인하거나 로그아웃하면 이전 쿠키는 무효가 된다."""
+
+    __tablename__ = "admin_session"
+
+    uid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sid: Mapped[str] = mapped_column(String(64))
