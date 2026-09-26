@@ -1,0 +1,9 @@
+services:
+  ktx-alert:
+    build: .
+    image: ktx-alert:0.1.0
+    env_file: .env
+    environment:
+      TZ: Asia/Seoul
+    # 정상 종료(감시 구간 끝)는 재시작 안 함, 크래시만 최대 5회 재시작
+    restart: on-failure:5

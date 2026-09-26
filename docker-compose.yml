@@ -1,0 +1,41 @@
+# prod: 코드는 이미지에 굽고 볼륨은 데이터만. 외부는 Cloudflare Tunnel 로, 이 PC 에서는 http://127.0.0.1:12972 로 들어온다.
+# 터널 Public Hostname(PUBLIC_BASE_URL 도메인)의 Service 는 http://frontend:80 (dev 도 같다)
+# dev 와 같은 compose 프로젝트(폴더 이름)라서, 한쪽을 up 하면 다른 쪽 컨테이너가 교체된다(동시에 뜨지 않는다).
+services:
+  backend:
+    build: ./backend
+    image: ktx-watch-backend:0.2.0
+    env_file: .env
+    environment:
+      TZ: Asia/Seoul
+      DATABASE_URL: sqlite:////app/data/ktx.db
+    volumes:
+      - ./data:/app/data
+    restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    build: ./frontend
+    image: ktx-watch-frontend:0.2.0
+    depends_on: [backend]
+    ports:
+      - "127.0.0.1:12972:80"  # 이 PC 에서만 접속(터널 없이 쓸 때)
+    restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.0
+    command: tunnel --no-autoupdate run
+    # .env 에 COMPOSE_PROFILES=tunnel 이 있을 때만 뜬다. 없으면 로컬 포트로만 접속한다
+    profiles: [tunnel]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [frontend]
+    restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

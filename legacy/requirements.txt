@@ -1,0 +1,4 @@
+pykorail==0.1.1
+curl-cffi==0.16.3
+pycryptodome==3.23.0
+certifi==2026.7.22

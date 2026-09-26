@@ -1,0 +1,22 @@
+/* 역 선택: 입력칸이지만 앱처럼 큰 글씨로 보이게 */
+.station-select,
+.station-select input {
+  font-size: 24px !important;
+  font-weight: 800;
+}
+.station-select.align-end,
+.station-select.align-end input {
+  text-align: end;
+}
+.station-select.ant-select {
+  padding-inline: 0;
+}
+/* 드롭다운 끝까지 스크롤해도 뒤 페이지가 따라 내려가지 않게 */
+.ant-select-dropdown-list-holder {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.health-banner:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}

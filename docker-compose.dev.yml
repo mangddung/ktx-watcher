@@ -1,0 +1,42 @@
+# dev: 소스를 bind mount 하고 백엔드 --reload, 프론트 HMR. 로컬 포트 12970(API), 12971(웹)
+# 외부에서는 prod 와 같은 도메인(PUBLIC_BASE_URL)과 같은 터널로 들어온다. 터널 Service 는 dev·prod 모두 http://frontend:80
+# prod 와 같은 compose 프로젝트라서 up 하면 prod 컨테이너가 교체된다(동시에 뜨지 않는다). DB(./data)는 prod 와 같이 쓴다.
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      TZ: Asia/Seoul
+      DATABASE_URL: sqlite:////app/data/ktx.db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    ports:
+      - "12970:8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      VITE_API_TARGET: http://backend:8000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "12971:80"
+    depends_on: [backend]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.0
+    command: tunnel --no-autoupdate run
+    # .env 에 COMPOSE_PROFILES=tunnel 이 있을 때만 뜬다. 없으면 로컬 포트로만 접속한다
+    profiles: [tunnel]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [frontend]
