@@ -147,3 +147,11 @@ def test_search_streams_each_page(client, monkeypatch):
     assert "timetable" in events[0]
     assert [[t["no"] for t in e["trains"]] for e in events[1:3]] == [["1", "2"], []]
     assert events[3] == {"done": True}
+
+
+def test_pause_and_resume_accept_empty_body(client):
+    client.cookies.set("ktx_session", admin_cookie())
+    h = {"X-Requested-With": "ktx"}
+    # 본문 없이도 422(형식 오류)가 아니라 서비스 검증(400)까지 간다
+    assert client.post("/api/watches/99/pause", headers=h).status_code == 400
+    assert client.post("/api/watches/99/resume", headers=h).status_code == 400

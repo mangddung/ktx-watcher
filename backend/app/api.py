@@ -263,10 +263,18 @@ async def archive(watch_id: int):
     return {"ok": True}
 
 
+@router.post("/watches/{watch_id}/pause")
+@invalid_to_400
+async def pause(watch_id: int):
+    await service.pause_watch(watch_id)
+    return {"ok": True}
+
+
 @router.post("/watches/{watch_id}/resume")
 @invalid_to_400
-async def resume(watch_id: int, body: PickIn):
-    await service.resume_watch(watch_id, body.to_pick())
+async def resume(watch_id: int, body: PickIn | None = None):
+    """본문이 없으면 지금 채널 그대로 재개한다(수동 일시정지). 채널이 끊겼으면 채널을 다시 지정해 보낸다."""
+    await service.resume_watch(watch_id, body.to_pick() if body else None)
     return {"ok": True}
 
 

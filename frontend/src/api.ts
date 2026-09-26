@@ -224,7 +224,9 @@ export const api = {
   setViewers: (id: number, viewers: string[]) => request('PUT', `/api/watches/${id}/viewers`, { viewers }),
   endWatch: (id: number) => request('POST', `/api/watches/${id}/end`),
   archiveWatch: (id: number) => request('POST', `/api/watches/${id}/archive`),
-  resumeWatch: (id: number, pick: ChannelPickBody) => request('POST', `/api/watches/${id}/resume`, pick),
+  pauseWatch: (id: number) => request('POST', `/api/watches/${id}/pause`),
+  // pick 이 없으면 지금 채널 그대로 재개한다(수동 일시정지)
+  resumeWatch: (id: number, pick?: ChannelPickBody) => request('POST', `/api/watches/${id}/resume`, pick),
   addWebhook: (name: string, url: string) => request<Channel>('POST', '/api/channels/webhook', { name, url }),
   deleteChannel: (id: number) => request('DELETE', `/api/channels/${id}`),
   testChannel: (id: number) => request('POST', `/api/channels/${id}/test`),

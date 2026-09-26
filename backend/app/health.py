@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models import Watch
+from app.service import MANUAL_PAUSE
 from app.state import state
 
 
@@ -44,7 +45,8 @@ def compute() -> dict:
     if errors:
         warning.append({"label": "조회 오류", "value": f"{errors}건 · {rate}%"})
     with SessionLocal() as db:
-        paused = db.scalar(select(func.count()).select_from(Watch).where(Watch.status == "paused"))
+        paused = db.scalar(select(func.count()).select_from(Watch).where(
+            Watch.status == "paused", Watch.pause_reason != MANUAL_PAUSE))
     if paused:
         warning.append({"label": "일시정지 감시", "value": f"{paused}개 · 채널 끊김"})
     # 시작 직후 봇이 연결되는 몇 초 동안은 경고하지 않는다(시스템 채널에 WARNING→OK 알림이 괜히 가지 않게)

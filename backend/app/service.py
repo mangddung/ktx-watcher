@@ -16,6 +16,7 @@ from app.state import state
 log = logging.getLogger(__name__)
 
 WEEKDAY = "월화수목금토일"
+MANUAL_PAUSE = "수동 일시정지"  # pause_reason. 채널 끊김 일시정지와 달리 서비스 경고로 치지 않는다
 
 
 class Invalid(ValueError):
@@ -277,11 +278,35 @@ async def set_viewers(watch_id: int, viewers: list[int]) -> None:
     log.info("감시 #%d 열람자 %d명으로 변경", watch_id, len(set(viewers)))
 
 
-async def resume_watch(watch_id: int, pick: ChannelPick) -> None:
+async def pause_watch(watch_id: int) -> None:
+    """수동 일시정지: 조회만 멈추고 채널은 그대로 둔다. 재개하면 같은 채널로 이어서 알린다."""
+    with SessionLocal() as db:
+        w = db.get(Watch, watch_id)
+        if not w or w.status != "active":
+            raise Invalid("감시 중인 감시만 일시정지할 수 있습니다.")
+        w.status, w.pause_reason = "paused", MANUAL_PAUSE
+        db.commit()
+        label = describe(w)
+    log.info("감시 일시정지 %s", label)
+    await notify_watch(watch_id, "감시 일시정지")
+
+
+async def resume_watch(watch_id: int, pick: ChannelPick | None = None) -> None:
+    """pick 이 없으면 지금 채널 그대로 재개한다(수동 일시정지). 채널이 끊겼으면 pick 으로 다시 지정해야 한다."""
     with SessionLocal() as db:
         w = db.get(Watch, watch_id)
         if not w or w.status != "paused":
             raise Invalid("일시정지된 감시만 재개할 수 있습니다.")
+        if pick is None:
+            if not w.channels or any(c.broken_at for c in w.channels):
+                raise Invalid("알림 채널이 끊겨 채널을 다시 지정해야 재개할 수 있습니다.")
+            w.status, w.pause_reason = "active", None
+            db.commit()
+            label = describe(w)
+    if pick is None:
+        log.info("감시 재개 %s", label)
+        await notify_watch(watch_id, "감시 재개")
+        return
     if pick.mode == "auto" and not (state.bot and state.bot.ready):
         raise Invalid("Discord 봇이 연결돼 있지 않아 채널을 자동으로 만들 수 없습니다.")
     if pick.mode == "manual":

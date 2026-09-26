@@ -231,6 +231,33 @@ def test_gone_channel_pauses_watch(env):
         assert s.scalar(select(Channel).where(Channel.id == w.channels[0].id)).broken_at is not None
 
 
+def test_manual_pause_stops_scan_and_resumes_on_same_channel(env):
+    scan = FakeScan([train("101", "2026-09-28 09:00", general="soldout")])
+    sch = make_scheduler(scan)
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    asyncio.run(service.pause_watch(wid))
+    assert get(wid).status == "paused"
+    run(sch)
+    assert scan.calls == []
+    assert compute()["level"] == "ok"  # 수동 일시정지는 서비스 경고가 아니다
+    asyncio.run(service.resume_watch(wid))
+    w = get(wid)
+    assert w.status == "active" and w.pause_reason is None and len(w.channels) == 1
+    run(sch)
+    assert len(scan.calls) == 1
+    assert [t.split(" ")[0:2] for _, t in env.sent] == [["감시", "일시정지"], ["감시", "재개"]]
+
+
+def test_resume_without_channel_pick_needs_live_channel(env):
+    make_scheduler(FakeScan([]))
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    asyncio.run(service.pause_watch(wid))
+    asyncio.run(service.channel_gone(get(wid).channels[0].id, "Unknown Webhook"))
+    with pytest.raises(service.Invalid, match="다시 지정"):
+        asyncio.run(service.resume_watch(wid))
+    assert get(wid).status == "paused"
+
+
 def valid_input(**kw):
     base = dict(dep="동대구", arr="수원", start_at=datetime(2026, 9, 28, 7), end_at=datetime(2026, 9, 28, 13), basis="dep",
                 train_types=["KTX"], seats=["일반실"], channel=service.ChannelPick("manual", [], []))

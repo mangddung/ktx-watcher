@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Col, Empty, Flex, Grid, Modal, Popconfirm, Row, Segmented, Space, Tag, Typography, theme } from 'antd'
 import {
   CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, RightOutlined,
-  ClockCircleOutlined, DeleteOutlined, PlayCircleOutlined, PlusOutlined, StopOutlined, SwapRightOutlined,
+  ClockCircleOutlined, DeleteOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, StopOutlined, SwapRightOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { api, useConfig, type Channel, type Health, type Overview, type Watch } from './api'
@@ -36,22 +36,22 @@ function until(t: number) {
   return s < 60 ? `${s}초 뒤` : `${Math.round(s / 60)}분 뒤`
 }
 
-// 서버 값은 5초마다 오지만 남은 시간은 1초마다 다시 그린다
-function Countdown({ at }: { at: number }) {
+// 서버 값은 5초마다 오지만 남은·지난 시간은 받은 시각 기준으로 1초마다 다시 그린다
+function Live({ text }: { text: () => string }) {
   const [, tick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [])
-  return <>{until(at)}</>
+  return <>{text()}</>
 }
 
 function ago(t: number) {
-  const s = Math.round((Date.now() - t) / 1000)
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000))
   if (s < 60) return `${s}초 전`
-  if (s < 3600) return `${Math.round(s / 60)}분 전`
-  if (s < 86400) return `${Math.round(s / 3600)}시간 전`
-  return `${Math.round(s / 86400)}일 전`
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`
+  if (s < 86400) return `${Math.floor(s / 3600)}시간 전`
+  return `${Math.floor(s / 86400)}일 전`
 }
 
 export default function WatchList({ watches, channels, health, overview, onChanged, onAdd, onLogs }: Props) {
@@ -120,7 +120,7 @@ export default function WatchList({ watches, channels, health, overview, onChang
             <div>
               <div style={{ opacity: 0.85 }}>다음 조회</div>
               <div style={{ fontSize: 18, fontWeight: 700 }}>{/* 조회할 감시가 없으면 루프는 돌아도 요청은 없으므로 '-' */}
-                {live.some((w) => w.status === 'active') && overview?.nextCycle ? <Countdown at={overview.nextCycle} /> : '-'}</div>
+                {live.some((w) => w.status === 'active') && overview?.nextCycle ? <Live text={() => until(overview.nextCycle!)} /> : '-'}</div>
             </div>
           </Flex>
         </Flex>
@@ -157,7 +157,9 @@ export default function WatchList({ watches, channels, health, overview, onChang
                 onOpen={() => setOpenId(w.id)}
                 onEnd={() => end(w)}
                 onArchive={() => archive(w)}
-                onResume={() => {
+                onPause={() => act(() => api.pauseWatch(w.id), '감시를 일시정지했습니다.')}
+                onResume={() => act(() => api.resumeWatch(w.id), '감시를 재개했습니다.')}
+                onRepick={() => {
                   setPick(emptyPick)
                   setResuming(w)
                 }}
@@ -189,16 +191,20 @@ export default function WatchList({ watches, channels, health, overview, onChang
   )
 }
 
-function WatchCard({ w, channels, onOpen, onEnd, onArchive, onResume }: {
+function WatchCard({ w, channels, onOpen, onEnd, onArchive, onPause, onResume, onRepick }: {
   w: Watch
   channels: Channel[]
   onOpen: () => void
   onEnd: () => void
   onArchive: () => void
+  onPause: () => void
   onResume: () => void
+  onRepick: () => void
 }) {
   const { token } = theme.useToken()
   const chs = channels.filter((c) => w.channelIds.includes(c.id))
+  // 채널이 살아 있으면(수동 일시정지) 그대로 재개하고, 끊겼으면 채널을 다시 지정해야 한다
+  const channelsOk = chs.length > 0 && chs.every((c) => !c.broken)
   const status = {
     active: <Tag color="processing" variant="filled" style={{ borderRadius: 999 }}>감시중</Tag>,
     creating: <Tag variant="filled" style={{ borderRadius: 999 }}>채널 생성 중</Tag>,
@@ -256,7 +262,7 @@ function WatchCard({ w, channels, onOpen, onEnd, onArchive, onResume }: {
         <Typography.Text type="secondary" style={{ fontSize: 13 }}>
           {w.status === 'ended'
             ? `${w.endReason === 'manual' ? '수동 종료' : '감시 대상 없음'} · ${dayjs(w.endedAt).format('M/D HH:mm')} 종료`
-            : w.lastScan ? `마지막 조회 ${ago(w.lastScan)}` : '첫 조회 대기 중'}
+            : w.lastScan ? <Live text={() => `마지막 조회 ${ago(w.lastScan!)}`} /> : '첫 조회 대기 중'}
           {w.archivedAt
             ? ` · ${dayjs(w.archivedAt).format('M/D HH:mm')} 채널 정리`
             : ` · 채널 ${chs.map((c) => c.name).join(', ') || '없음'}`}
@@ -265,8 +271,12 @@ function WatchCard({ w, channels, onOpen, onEnd, onArchive, onResume }: {
 
         {/* 버튼과 확인 팝업 클릭이 카드 클릭(상세 열기)으로 번지지 않게 막는다 */}
         <Space wrap onClick={(e) => e.stopPropagation()}>
-          {w.status === 'paused' && (
-            <Button type="primary" shape="round" icon={<PlayCircleOutlined />} onClick={onResume}>채널 지정 후 재개</Button>
+          {w.status === 'active' && (
+            <Button shape="round" icon={<PauseCircleOutlined />} onClick={onPause}>일시정지</Button>
+          )}
+          {w.status === 'paused' && (channelsOk
+            ? <Button type="primary" shape="round" icon={<PlayCircleOutlined />} onClick={onResume}>재개</Button>
+            : <Button type="primary" shape="round" icon={<PlayCircleOutlined />} onClick={onRepick}>채널 지정 후 재개</Button>
           )}
           {w.status !== 'ended' ? (
             <Popconfirm
