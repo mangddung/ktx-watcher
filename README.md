@@ -55,7 +55,7 @@
 | `CLOUDFLARE_TUNNEL_TOKEN`, `COMPOSE_PROFILES=tunnel` | 선택 | Cloudflare Tunnel 로 외부 공개 |
 | `WATCH_CUTOFF_MINUTES` | 기본 60 | 출발 몇 분 전까지 감시할지 |
 | `SCAN_INTERVAL_MIN`, `SCAN_INTERVAL_MAX` | 기본 40, 80 | 감시 사이클 간격(초, 난수) |
-| `PAGE_GAP_MIN`, `PAGE_GAP_MAX` | 기본 2, 5 | 코레일 요청 사이 간격(초, 난수) |
+| `PAGE_GAP_MIN`, `PAGE_GAP_MAX` | 기본 1, 2 | 코레일 요청 사이 간격(초, 난수) |
 | `MAX_FAILS`, `BLOCK_COOLDOWN_MINUTES` | 기본 10, 30 | 연속 실패 몇 번에 몇 분 쉴지 |
 | `MAX_ACTIVE_WATCHES`, `MAX_WATCH_DAYS` | 기본 10, 3 | 진행 중인 감시 수, 감시 구간 최대 일수 |
 | `LOG_LEVEL` | 기본 INFO | DEBUG 면 페이지별 조회 로그까지 |

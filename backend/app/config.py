@@ -60,7 +60,7 @@ class Settings:
     data_go_kr_key: str = ""  # 선택. 있으면 열차 시간표를 새로 받는다(timetable.py)
     cutoff_minutes: int = 60
     scan_interval: tuple[int, int] = (40, 80)
-    page_gap: tuple[int, int] = (2, 5)
+    page_gap: tuple[int, int] = (1, 2)
     max_fails: int = 10
     block_cooldown_minutes: int = 30
     max_active: int = 10
@@ -99,7 +99,7 @@ def get_settings() -> Settings:
         data_go_kr_key=env("DATA_GO_KR_KEY", "").strip(),
         cutoff_minutes=_int("WATCH_CUTOFF_MINUTES", 60),
         scan_interval=(_int("SCAN_INTERVAL_MIN", 40), _int("SCAN_INTERVAL_MAX", 80)),
-        page_gap=(_int("PAGE_GAP_MIN", 2), _int("PAGE_GAP_MAX", 5)),
+        page_gap=(_int("PAGE_GAP_MIN", 1), _int("PAGE_GAP_MAX", 2)),
         max_fails=_int("MAX_FAILS", 10),
         block_cooldown_minutes=_int("BLOCK_COOLDOWN_MINUTES", 30),
         max_active=_int("MAX_ACTIVE_WATCHES", 10),
