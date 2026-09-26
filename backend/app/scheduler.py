@@ -235,6 +235,7 @@ class Scheduler:
                     db.delete(prev)  # 다시 매진: 기록을 지워 다음에 자리가 나면 또 알린다
             row.scan_count += 1
             row.last_scan_at = now
+            row.last_error = None  # 정상 조회로 돌아오면 지난 오류는 지운다
             row.remaining = len(cands)
             row.found_count += len(lines)
             db.commit()

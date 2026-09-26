@@ -405,14 +405,16 @@ def test_long_found_message_is_split_by_line_without_losing_trains(env):
 def test_auto_channel_start_message_has_watch_info(env):
     state.bot = CreatingBot()
     inp = auto_input()
-    inp.trains = [{"date": f"{inp.start_at:%Y-%m-%d}", "no": "122", "dep": "07:30"}]
+    inp.train_types = ["KTX", "KTX-산천", "ITX-마음", "무궁화"]
+    inp.trains = [{"date": f"{inp.start_at:%Y-%m-%d}", "no": "122", "dep": "07:30"},
+                  {"date": f"{inp.start_at:%Y-%m-%d}", "no": "124", "dep": "08:30"}]
     w = asyncio.run(service.create_watch(inp))
     [(name, text)] = env.sent
     assert name.startswith(f"w{w.id}-")  # 자동으로 만든 전용 채널
     lines = text.split("\n")
     assert lines[0] == f"감시 시작 {service.describe(w)}"
-    assert lines[1] == "KTX · 일반실 · 1명 · 선택 1편"
-    assert lines[2] == f"열차: {service.md(inp.start_at)} 122(07:30)"
+    assert lines[1] == "KTX, ITX, 무궁화호 · 일반실 · 1명 · 선택 2편"
+    assert lines[2] == f"열차: {service.md(inp.start_at)} 122(07:30), 124(08:30)"  # 같은 날짜는 한 번만
 
 
 def test_picked_trains_narrow_scan_window_to_their_times():

@@ -47,6 +47,11 @@ def md(d: datetime) -> str:
     return f"{d.month}/{d.day}({WEEKDAY[d.weekday()]})"
 
 
+def short_type(t: str) -> str:
+    """알림용 짧은 열차 종류: KTX-산천 → KTX, ITX-마음 → ITX, 무궁화 → 무궁화호."""
+    return t.split("-")[0] if t.startswith(("KTX", "ITX")) else f"{t}호"
+
+
 def describe(w: Watch) -> str:
     kind = "출발" if w.time_basis == "dep" else "도착"
     end = f"{w.end_at:%H:%M}" if w.start_at.date() == w.end_at.date() else f"{md(w.end_at)} {w.end_at:%H:%M}"
@@ -148,9 +153,12 @@ async def create_watch(inp: WatchInput, created_via: str = "web") -> Watch:
                 w.status = "active"
             db.commit()
     log.info("감시 추가 %s (%s)", describe(w), created_via)
-    types = ", ".join(inp.train_types)
+    types = ", ".join(dict.fromkeys(short_type(t) for t in inp.train_types))
     target = f"선택 {len(inp.trains)}편" if inp.trains else "조건 전체"
-    picked = ", ".join(f"{md(datetime.strptime(t['date'], '%Y-%m-%d'))} {t['no']}({t['dep']})" for t in inp.trains or [])
+    by_date: dict[str, list[str]] = {}
+    for t in inp.trains or []:
+        by_date.setdefault(t["date"], []).append(f"{t['no']}({t['dep']})")
+    picked = " / ".join(f"{md(datetime.strptime(d, '%Y-%m-%d'))} {', '.join(v)}" for d, v in by_date.items())
     # 시작 알림은 전용 채널에도 감시 정보를 다 보낸다(채널에 남는 첫 메시지가 감시 설명이 된다)
     await notify_watch(w.id, "감시 시작", detail=f"{types} · {', '.join(inp.seats)} · {inp.passengers}명 · {target}",
                        body=f"열차: {picked}" if picked else "", full=True)
