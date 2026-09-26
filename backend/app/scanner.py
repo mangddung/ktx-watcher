@@ -10,12 +10,15 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from pykorail import AdultPassenger, Korail, NoResultsError
+from pykorail import AdultPassenger, Korail, KorailError, NoResultsError
 from pykorail.exceptions import NetFunnelError, TransportError
 
 log = logging.getLogger(__name__)
 
 SEAT_STATE = {"11": "avail", "12": "short", "13": "soldout"}  # 그 외 코드는 "none"(좌석 등급 없음)
+# "사용자가 많아 접속이 원활하지 않습니다" 응답. 차단이 아니라 잠깐 혼잡이라 코레일 앱처럼 조금 기다렸다 다시 요청한다
+BUSY = "S002"
+BUSY_RETRIES = 3
 
 
 @dataclass(frozen=True)
@@ -69,19 +72,26 @@ class Gate:
 
     def call(self, fn):
         with self.lock:
-            self._wait()
-            try:
-                if self.client is None:
-                    self.client = Korail()
-                    self.client.trains.validate_stations = False
-                return fn(self.client)
-            except NoResultsError:
-                raise
-            except Exception:
-                self.client = None  # 세션이 꼬였을 수 있으니 다음 요청에서 새로 만든다
-                raise
-            finally:
-                self.last = time.monotonic()
+            for attempt in range(BUSY_RETRIES + 1):
+                self._wait()
+                try:
+                    if self.client is None:
+                        self.client = Korail()
+                        self.client.trains.validate_stations = False
+                    return fn(self.client)
+                except NoResultsError:
+                    raise
+                except KorailError as e:
+                    if e.code == BUSY and attempt < BUSY_RETRIES:
+                        log.info("코레일 혼잡(%s), 잠깐 뒤 같은 요청을 다시 보냅니다 (%d/%d)", BUSY, attempt + 1, BUSY_RETRIES)
+                        continue
+                    self.client = None
+                    raise
+                except Exception:
+                    self.client = None  # 세션이 꼬였을 수 있으니 다음 요청에서 새로 만든다
+                    raise
+                finally:
+                    self.last = time.monotonic()
 
     def station_names(self) -> set[str]:
         return self.call(lambda k: k.stations.names())

@@ -58,3 +58,32 @@ def test_current_hour_today_asks_from_now(monkeypatch):
     got, _ = scan(gate, datetime(2026, 9, 28, 12, 31), datetime(2026, 9, 28, 23, 59), monkeypatch,
                   now=datetime(2026, 9, 28, 12, 30))
     assert got == ["1250", "1310"] and gate.asks[0] == "12:30"
+
+
+def test_gate_retries_same_request_when_korail_is_busy(monkeypatch):
+    from pykorail import KorailError
+
+    gate = scanner.Gate((0, 0))
+    gate.client = object()
+    calls = []
+
+    def fn(_):
+        calls.append(1)
+        if len(calls) < 3:
+            raise KorailError("사용자가 많아 접속이 원활하지 않습니다.", scanner.BUSY)
+        return "ok"
+
+    assert gate.call(fn) == "ok" and len(calls) == 3
+    assert gate.client is not None  # 혼잡은 세션 문제가 아니라 그대로 쓴다
+
+    calls.clear()
+    def always_busy(_):
+        calls.append(1)
+        raise KorailError("혼잡", scanner.BUSY)
+
+    try:
+        gate.call(always_busy)
+        assert False
+    except KorailError:
+        pass
+    assert len(calls) == scanner.BUSY_RETRIES + 1
