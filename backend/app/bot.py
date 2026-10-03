@@ -27,6 +27,11 @@ NEEDED = discord.Permissions(
     send_messages_in_threads=True, create_public_threads=True, create_private_threads=True, add_reactions=True)
 
 
+def failed(what: str, e: discord.HTTPException) -> service.Invalid:
+    """Discord API 오류를 화면에 보여줄 입력 오류로 바꾼다. 그대로 두면 웹 API 가 500 을 낸다."""
+    return service.Invalid(f"Discord 에서 {what} 못했습니다 (HTTP {e.status}). 봇 권한을 확인하거나 잠시 뒤 다시 시도하세요.")
+
+
 class Bot(discord.Client):
     def __init__(self, members_intent: bool = True) -> None:
         intents = discord.Intents.default()
@@ -146,8 +151,11 @@ class Bot(discord.Client):
     async def create_watch_channel(self, name: str, viewer_ids: list[int]) -> int:
         if missing := self.missing_permissions():
             raise service.Invalid(f"봇 역할에 서버 권한이 부족해 비공개 채널을 만들 수 없습니다: {', '.join(missing)}")
-        cat = await self.ensure_category()
-        ch = await self.guild.create_text_channel(name[:90], category=cat, overwrites=self._watch_overwrites(viewer_ids))
+        try:
+            cat = await self.ensure_category()
+            ch = await self.guild.create_text_channel(name[:90], category=cat, overwrites=self._watch_overwrites(viewer_ids))
+        except discord.HTTPException as e:
+            raise failed("채널을 만들지", e) from e
         log.info("감시 채널 생성 %s 열람자 %d명", name, len(viewer_ids))
         return ch.id
 
@@ -160,8 +168,8 @@ class Bot(discord.Client):
             raise service.Invalid(f"봇 역할에 서버 권한이 부족해 채널 열람자를 바꿀 수 없습니다: {', '.join(missing)}")
         try:
             await ch.edit(overwrites=self._watch_overwrites(viewer_ids), reason="감시 열람자 변경")
-        except discord.Forbidden as e:
-            raise service.Invalid("봇 권한이 부족해 채널 권한을 바꾸지 못했습니다.") from e
+        except discord.HTTPException as e:
+            raise failed("채널 권한을 바꾸지", e) from e
 
     async def delete_channel(self, channel_id: int) -> None:
         ch = self.guild.get_channel(channel_id) if self.guild else None
@@ -172,6 +180,9 @@ class Bot(discord.Client):
             await ch.delete(reason="감시 채널 정리")
         except discord.NotFound:
             self.deleting.discard(channel_id)
+        except discord.HTTPException as e:
+            self.deleting.discard(channel_id)
+            raise failed("채널을 지우지", e) from e
         except BaseException:
             self.deleting.discard(channel_id)
             raise
