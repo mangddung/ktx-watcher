@@ -58,7 +58,10 @@ class Notifier:
         for attempt in range(2):
             try:
                 async with self.http.request(method, url, **kw) as r:
-                    body = await r.json(content_type=None) if r.status != 204 else {}
+                    try:
+                        body = await r.json(content_type=None) if r.status != 204 else {}
+                    except ValueError:  # JSON 이 아닌 본문(Cloudflare 오류 페이지 등)은 상태 코드로만 판단한다
+                        body = {}
                     if r.status == 429 and attempt == 0:
                         await asyncio.sleep(float((body or {}).get("retry_after", 1)))
                         continue

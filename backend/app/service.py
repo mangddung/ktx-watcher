@@ -178,13 +178,14 @@ def compose(title: str, label: str, tail: str, detail: str, body: str, dedicated
 
 
 async def notify_watch(watch_id: int, title: str, tail: str = "", detail: str = "", body: str = "",
-                       summary: bool = False, full: bool = False) -> int:
-    """감시의 모든 채널로 보낸다. 보낸 채널 수를 돌려준다. full 이면 전용 채널에도 감시 정보를 붙인다."""
+                       summary: bool = False, full: bool = False, only: set[int] | None = None) -> dict[int, str]:
+    """감시의 모든 채널(only 가 있으면 그 채널만)로 보낸다. full 이면 전용 채널에도 감시 정보를 붙인다.
+    일시적 오류로 못 보낸 채널을 {채널 id: "이름 (사유)"} 로 돌려준다. 사라진 채널은 감시를 일시정지하므로 넣지 않는다."""
     with SessionLocal() as db:
         w = db.get(Watch, watch_id)
-        channels = [c for c in w.channels if not c.broken_at]
+        channels = [c for c in w.channels if not c.broken_at and (only is None or c.id in only)]
         label = describe(w)
-    sent = 0
+    failed: dict[int, str] = {}
     for ch in channels:
         try:
             mids = [await state.notifier.send(ch, part)
@@ -194,12 +195,12 @@ async def notify_watch(watch_id: int, title: str, tail: str = "", detail: str = 
             continue
         except SendFailed as e:
             log.warning("알림 전송 실패 channel=%s %s", ch.name, e)
+            failed[ch.id] = f"{ch.name} ({e})"[:200]
             continue
-        sent += 1
         with SessionLocal() as db:
             db.add_all(SentMessage(watch_id=watch_id, channel_id=ch.id, message_id=m, is_summary=summary) for m in mids if m)
             db.commit()
-    return sent
+    return failed
 
 
 async def announce_active(title: str, tail: str) -> None:

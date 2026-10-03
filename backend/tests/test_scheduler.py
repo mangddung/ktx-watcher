@@ -9,7 +9,7 @@ from app import db, service
 from app.config import Settings
 from app.health import compute
 from app.models import Channel, Watch
-from app.notify import ChannelGone
+from app.notify import ChannelGone, SendFailed
 from app.scanner import TrainInfo
 from app.scheduler import Scheduler
 from app.state import state
@@ -21,10 +21,16 @@ class FakeNotifier:
     def __init__(self):
         self.sent: list[tuple[str, str]] = []
         self.gone: set[str] = set()
+        self.failing: set[str] = set()  # 일시적 오류(SendFailed)로 실패하는 채널
+        self.error: Exception | None = None  # 있으면 모든 전송이 이 예외로 실패한다
 
     async def send(self, ch, text):
         if ch.target in self.gone:
             raise ChannelGone("Unknown Webhook")
+        if ch.target in self.failing:
+            raise SendFailed("HTTP 502")
+        if self.error:
+            raise self.error
         self.sent.append((ch.name, text))
         return str(len(self.sent))
 
@@ -172,6 +178,47 @@ def test_empty_result_keeps_watch_while_timetable_expects_trains(env):
     state.timetable = {"days": {}}
     run(sch)
     assert get(wid).status == "ended"  # 시간표에도 없으면 감시 대상 없음
+
+
+def test_failed_channel_alone_gets_resent_while_seat_remains(env):
+    scan = FakeScan([train("101", "2026-09-28 09:00"), train("103", "2026-09-28 10:00")])
+    sch = make_scheduler(scan)
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    with db.SessionLocal() as s:
+        w = s.get(Watch, wid)
+        w.channels.append(Channel(kind="discord_webhook", name="flaky", target="https://x/flaky"))
+        s.commit()
+    env.failing.add("https://x/flaky")
+    run(sch)
+    assert [n for n, _ in env.sent] == [get(wid).channels[0].name]  # 다른 채널은 받았다
+    env.failing.clear()
+    scan.trains = [train("101", "2026-09-28 09:00"), train("103", "2026-09-28 10:00", general="soldout")]
+    run(sch, 2)  # 못 받은 채널에만, 그 사이 다시 매진된 103 은 빼고 한 번만 다시 보낸다
+    name, text = env.sent[-1]
+    assert len(env.sent) == 2 and name == "flaky" and "재전송" in text and "101" in text and "103" not in text
+
+
+def test_undelivered_alert_gives_up_after_retries_and_warns(env):
+    sch = make_scheduler(FakeScan([train("101", "2026-09-28 09:00")]))
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    env.failing.add(get(wid).channels[0].target)
+    run(sch, 2)  # 최초 전송, 재시도 1회 실패
+    assert get(wid).last_error is None and compute()["level"] == "ok"
+    run(sch)  # 재시도 2회 실패: 포기하고 경고
+    h = compute()
+    assert h["level"] == "warning" and any(r["label"] == "알림 전송 실패" for r in h["reasons"])
+    assert get(wid).last_error.startswith("알림 전송 실패: ")
+    env.failing.clear()
+    run(sch)
+    assert env.found() == [] and get(wid).last_error.startswith("알림 전송 실패: ")  # 포기한 알림은 보내지 않고 경고는 남긴다
+
+
+def test_notify_error_is_not_counted_as_scan_failure(env):
+    sch = make_scheduler(FakeScan([train("101", "2026-09-28 09:00")]))
+    add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    env.error = RuntimeError("boom")
+    run(sch)
+    assert sch.fails == 0 and all(ok for _, ok, _ in sch.history)
 
 
 def test_paused_watch_is_not_scanned_but_still_expires(env):

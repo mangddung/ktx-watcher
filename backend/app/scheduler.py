@@ -22,6 +22,20 @@ log = logging.getLogger(__name__)
 ARR_LOOKBACK = timedelta(hours=6)
 # 고른 열차만 감시할 때 고른 출발 시각 앞뒤로 더 보는 폭
 PICK_MARGIN = timedelta(minutes=30)
+# 취소표 알림을 못 보낸 채널로 다음 조회 때마다 다시 보내는 횟수. 그래도 못 보내면 포기하고 경고한다
+RETRIES = 2
+# 포기한 알림을 상태 경고와 감시의 마지막 오류로 보여주는 기간
+UNDELIVERED_SHOWN = timedelta(hours=1)
+
+
+@dataclass
+class Unsent:
+    """한 감시의 한 채널로 못 보낸 좌석. 다음 조회 때 아직 남아 있는 좌석만 다시 보낸다.
+    ponytail: 메모리에만 둔다. 재시작하면 기다리던 재전송은 사라진다. 남기려면 채널별 seen 을 DB 에 둬야 한다"""
+
+    seats: dict[tuple[str, str], set[str]] = field(default_factory=dict)  # (출발일 YYYYMMDD, 열차번호) → 좌석
+    tries: int = 0  # 다시 보내다 실패한 횟수
+    reason: str = ""
 
 
 @dataclass
@@ -77,6 +91,10 @@ def build_groups(watches: list[Watch], now: datetime, cutoff: timedelta) -> dict
     return groups
 
 
+def found_line(t: TrainInfo, seats: set[str]) -> str:
+    return f"{t.type} {t.no}  {service.md(t.dep_at)} {t.dep_at:%H:%M}→{t.arr_at:%H:%M}  {', '.join(sorted(seats))}"
+
+
 def targets(w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta) -> list[TrainInfo]:
     picked = {(t["date"], t["no"]) for t in w.trains} if w.trains else None
     out = []
@@ -102,6 +120,8 @@ class Scheduler:
         self.groups = 0
         self.level = "ok"
         self.task: asyncio.Task | None = None
+        self.unsent: dict[tuple[int, int], Unsent] = {}  # (감시 id, 채널 id) → 못 보낸 좌석
+        self.undelivered: deque[tuple[datetime, int, str]] = deque(maxlen=100)  # 재시도 끝에 포기한 알림 (시각, 감시 id, 사유)
 
     def record(self, ok: bool, block: bool = False) -> None:
         now = self.clock()
@@ -149,6 +169,8 @@ class Scheduler:
             await service.end_watch(w.id, "no_targets")
             watches.remove(w)
         active = [w for w in watches if w.status == "active"]
+        live = {w.id for w in active}
+        self.unsent = {k: u for k, u in self.unsent.items() if k[0] in live}  # 멈추거나 끝난 감시의 재전송은 버린다
         groups = build_groups(active, started, cutoff)
         self.groups = len(groups)
 
@@ -164,18 +186,18 @@ class Scheduler:
             try:
                 results[key] = await asyncio.to_thread(
                     self.scan_day, state.gate, g.dep, g.arr, g.day, g.after, g.until, g.passengers)
-                self.record(True)
-                # 필요한 조회가 모두 끝난 감시는 사이클 끝을 기다리지 않고 바로 비교하고 알린다
-                for w in active:
-                    if w.id in g.watch_ids and w.id not in done and all(k in results for k in keys_of[w.id]):
-                        done.add(w.id)
-                        await self.evaluate(w, [t for k in keys_of[w.id] for t in results[k]], self.clock(), cutoff)
             except Exception as e:
                 self.record(False, scanner.is_block_error(e))
                 error = f"{type(e).__name__}: {e}"[:300]
                 log.error("%s→%s %s 조회 실패: %s (연속 %d/%d)", g.dep, g.arr, f"{g.day:%m/%d}", error,
                           self.fails + 1, s.max_fails)
                 break  # 차단일 수 있으니 이번 사이클의 나머지 요청은 보내지 않는다
+            self.record(True)
+            # 필요한 조회가 모두 끝난 감시는 사이클 끝을 기다리지 않고 바로 비교하고 알린다
+            for w in active:
+                if w.id in g.watch_ids and w.id not in done and all(k in results for k in keys_of[w.id]):
+                    done.add(w.id)
+                    await self.evaluate_safe(w, [t for k in keys_of[w.id] for t in results[k]], self.clock(), cutoff)
 
         if error:
             self.fails += 1
@@ -205,19 +227,29 @@ class Scheduler:
                         row.last_error = error
                         db.commit()
                 continue
-            await self.evaluate(w, [t for k in keys for t in results[k]], now, cutoff)
+            await self.evaluate_safe(w, [t for k in keys for t in results[k]], now, cutoff)
 
         self.last_cycle_at = self.clock()
         self.cycle_seconds = int((self.last_cycle_at - started).total_seconds())
         if groups:
             log.info("사이클 완료 %d묶음 %d초, 오류 %s", len(groups), self.cycle_seconds, "있음" if error else "없음")
 
+    async def evaluate_safe(self, w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta) -> None:
+        """비교·알림 중 오류는 그 감시만 건너뛴다. 코레일 조회 실패로 세지 않는다."""
+        try:
+            await self.evaluate(w, trains, now, cutoff)
+        except Exception as e:
+            log.error("감시 #%d 비교·알림 오류: %s: %s", w.id, type(e).__name__, e)
+
     async def evaluate(self, w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta) -> None:
         cands = targets(w, trains, now, cutoff)
         # 코레일이 0편을 줬는데 시간표에는 남은 열차가 있으면 응답 이상일 수 있어 끝내지 않는다(시각이 지나면 끝난다)
         expected = 0 if trains else len(
             timetable.static_trains(w.dep, w.arr, w.start_at, w.end_at, w.time_basis, now + cutoff))
+        lost = next((m for at, wid, m in reversed(self.undelivered) if wid == w.id and now - at < UNDELIVERED_SHOWN), None)
         lines = []
+        fresh: dict[tuple[str, str], set[str]] = {}  # 이번에 새로 난 좌석
+        now_avail: dict[tuple[str, str], tuple[TrainInfo, set[str]]] = {}  # 지금 남은 좌석
         with SessionLocal() as db:
             row = db.get(Watch, w.id)
             if row.status != "active":
@@ -226,10 +258,11 @@ class Scheduler:
             for t in cands:
                 avail = t.seats() & set(w.seat_classes)
                 key = (t.date.replace("-", ""), t.no)
+                now_avail[key] = (t, avail)
                 prev = seen.get(key)
                 if avail - set(prev.seats if prev else []):
-                    lines.append(f"{t.type} {t.no}  {service.md(t.dep_at)} {t.dep_at:%H:%M}→{t.arr_at:%H:%M}  "
-                                 f"{', '.join(sorted(avail))}")
+                    lines.append(found_line(t, avail))
+                    fresh[key] = avail
                 if avail and prev:
                     prev.seats = sorted(avail)
                 elif avail:
@@ -238,13 +271,48 @@ class Scheduler:
                     db.delete(prev)  # 다시 매진: 기록을 지워 다음에 자리가 나면 또 알린다
             row.scan_count += 1
             row.last_scan_at = now
-            # 정상 조회로 돌아오면 지난 오류는 지운다
-            row.last_error = f"코레일 조회 결과 0편 (시간표에는 {expected}편)" if expected else None
+            # 정상 조회로 돌아오면 지난 오류는 지운다. 재시도 끝에 못 보낸 알림은 UNDELIVERED_SHOWN 동안 남긴다
+            row.last_error = (f"코레일 조회 결과 0편 (시간표에는 {expected}편)" if expected
+                              else f"알림 전송 실패: {lost}" if lost else None)
             row.remaining = len(cands)
             row.found_count += len(lines)
             db.commit()
+        failed = {}
         if lines:
             log.info("좌석 발견 #%d %d편", w.id, len(lines))
-            await service.notify_watch(w.id, "취소표 발견", body="\n".join(lines))
+            failed = await service.notify_watch(w.id, "취소표 발견", body="\n".join(lines))
+        await self.resend(w, now_avail, fresh, failed, now)
         if not cands and not expected:
             await service.end_watch(w.id, "no_targets")
+
+    async def resend(self, w: Watch, now_avail: dict, fresh: dict, failed: dict[int, str], now: datetime) -> None:
+        """지난 조회 때 못 보낸 채널로 아직 남은 좌석만 다시 보낸다. 이번에 못 보낸 채널은 다음 조회 때 보낸다.
+        최초 전송 뒤 RETRIES 번 더 실패하면 포기하고 경고(상태, 감시의 마지막 오류)로 남긴다."""
+        for (wid, ch_id), u in list(self.unsent.items()):
+            if wid != w.id or ch_id in failed:
+                continue
+            del self.unsent[(wid, ch_id)]
+            # 다시 매진된 좌석과, 이번에 모든 채널로 새로 보낸 열차는 뺀다
+            seats = {k: s & now_avail[k][1] for k, s in u.seats.items()
+                     if k in now_avail and k not in fresh and s & now_avail[k][1]}
+            if not seats:
+                continue
+            body = "\n".join(found_line(now_avail[k][0], now_avail[k][1]) for k in seats)
+            if err := (await service.notify_watch(w.id, "취소표 발견", tail=" · 재전송", body=body, only={ch_id})).get(ch_id):
+                self.unsent[(wid, ch_id)] = Unsent(seats, u.tries + 1, err)
+        for ch_id, err in failed.items():
+            u = self.unsent.get((w.id, ch_id))
+            if u:
+                u.tries += 1  # 밀린 재전송도 이번에 같이 못 보낸 셈
+            else:
+                u = self.unsent[(w.id, ch_id)] = Unsent()
+            u.seats.update(fresh)
+            u.reason = err
+        for key, u in list(self.unsent.items()):
+            if key[0] == w.id and u.tries >= RETRIES:
+                del self.unsent[key]
+                self.undelivered.append((now, w.id, u.reason))
+                log.error("감시 #%d 취소표 알림을 %d번 다시 보내도 못 보내 포기합니다: %s", w.id, RETRIES, u.reason)
+                with SessionLocal() as db:
+                    db.get(Watch, w.id).last_error = f"알림 전송 실패: {u.reason}"
+                    db.commit()

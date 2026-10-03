@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models import Watch
+from app.scheduler import RETRIES, UNDELIVERED_SHOWN
 from app.service import MANUAL_PAUSE
 from app.state import state
 
@@ -52,6 +53,8 @@ def compute() -> dict:
             Watch.status == "paused", Watch.pause_reason != MANUAL_PAUSE))
     if paused:
         warning.append({"label": "일시정지 감시", "value": f"{paused}개 · 채널 끊김"})
+    if lost := sum(1 for at, _, _ in sch.undelivered if at >= now - UNDELIVERED_SHOWN):
+        warning.append({"label": "알림 전송 실패", "value": f"{lost}건 · 1시간 (재시도 {RETRIES}회 후 포기)"})
     # 시작 직후 봇이 연결되는 몇 초 동안은 경고하지 않는다(시스템 채널에 WARNING→OK 알림이 괜히 가지 않게)
     if s.bot_token and not (state.bot and state.bot.ready) and time.monotonic() - state.started > 60:
         warning.append({"label": "Discord 봇", "value": "연결 끊김"})
