@@ -14,6 +14,7 @@ class State:
     telegram: Any = None  # telegram.TelegramPoller, 토큰이 없으면 None
     stations: list[str] = field(default_factory=list)
     missing_stations: list[str] = field(default_factory=list)
+    selftest: dict | None = None  # selftest.py 시작 점검 결과 {"level": warning|critical, "detail"}. 정상이면 None
     timetable: dict = field(default_factory=lambda: {"days": {}})  # timetable.py
     routes: dict[str, list[str]] = field(default_factory=dict)  # 출발역 → 직통 도착역
     started: float = 0.0  # time.monotonic() 기준 시작 시각

@@ -1,4 +1,4 @@
-"""FastAPI 앱. 시작할 때 설정 검사, DB 마이그레이션, 역 목록 대조, 스케줄러·봇·Telegram 을 띄운다."""
+"""FastAPI 앱. 시작할 때 설정 검사, DB 마이그레이션, 스케줄러·봇·Telegram·시작 점검(selftest)을 띄운다."""
 
 import asyncio
 import logging
@@ -12,7 +12,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import db, service, timetable
+from app import db, selftest, service, timetable
 from app.api import router as api_router
 from app.auth import router as auth_router
 from app.config import get_settings, startup_problems
@@ -43,19 +43,6 @@ def migrate() -> None:
     cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
     cfg.set_main_option("sqlalchemy.url", settings.database_url)
     command.upgrade(cfg, "head")
-
-
-async def check_stations() -> None:
-    """역 마스터와 대조해 없는 역은 목록에서 뺀다. 조회에 실패하면 목록을 그대로 쓴다."""
-    try:
-        names = await asyncio.to_thread(state.gate.station_names)
-    except Exception as e:
-        log.warning("역 마스터를 불러오지 못해 역 목록을 그대로 씁니다: %s: %s", type(e).__name__, e)
-        return
-    state.missing_stations = [s for s in KTX_STATIONS if s not in names]
-    if state.missing_stations:
-        log.warning("역 마스터에 없는 역을 목록에서 뺍니다: %s", ", ".join(state.missing_stations))
-        state.stations = [s for s in KTX_STATIONS if s in names]
 
 
 def _log_crash(task: asyncio.Task) -> None:
@@ -96,7 +83,6 @@ async def lifespan(_: FastAPI):
 
         state.telegram = TelegramPoller(settings.telegram_token)
         tasks.append(asyncio.create_task(state.telegram.run(), name="telegram"))
-    await check_stations()
     timetable.load()
     if settings.data_go_kr_key:
         tasks.append(asyncio.create_task(timetable.refresh_loop(settings.data_go_kr_key), name="timetable"))
@@ -105,6 +91,7 @@ async def lifespan(_: FastAPI):
     state.scheduler = Scheduler()
     state.scheduler.task = asyncio.create_task(state.scheduler.run(), name="scheduler")
     tasks.append(state.scheduler.task)
+    tasks.append(asyncio.create_task(selftest.run(), name="selftest"))
     for t in tasks:
         t.add_done_callback(_log_crash)
     log.info("서비스 시작 (역 %d개)", len(state.stations))

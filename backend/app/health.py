@@ -28,6 +28,9 @@ def compute() -> dict:
         mins = max(1, int((sch.cooldown_until - now).total_seconds() // 60))
         critical.append({"label": "다시 시도", "value": f"{mins}분 뒤"})
         title = title or "조회 중단 · 연속 실패"
+    if state.selftest and state.selftest["level"] == "critical":
+        critical.append({"label": "조회 확인", "value": state.selftest["detail"]})
+        title = title or "열차 조회 안 됨"
     if len(recent) >= 4 and rate >= 50:
         critical.append({"label": "실패율", "value": f"{rate}% · 1시간"})
         title = title or "조회 실패율 높음"
@@ -56,6 +59,8 @@ def compute() -> dict:
         warning.append({"label": "Telegram", "value": "폴링 실패"})
     if s.admin_errors:
         warning.append({"label": "설정 오류", "value": f"{len(s.admin_errors)}건 · 로그 확인"})
+    if state.selftest and state.selftest["level"] == "warning":
+        warning.append({"label": "시간표", "value": state.selftest["detail"]})
     if state.missing_stations:
         warning.append({"label": "역 목록", "value": f"{len(state.missing_stations)}개 역 빠짐"})
     if warning:
