@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from app import timetable
 from app.state import state
@@ -130,3 +130,16 @@ def test_station_rank_compares_ktx_then_itx_then_others(monkeypatch):
 def test_build_day_pads_numbers_like_korail():
     rows = [row("00014", 1, "서울", None, "06:00"), row("00014", 2, "부산", "08:40", None)]
     assert list(timetable.build_day(rows, STATIONS)) == ["014"]  # 코레일 조회 결과의 열차번호와 같아야 합친다
+
+
+def test_train_run_finds_whole_train_and_previous_day_after_midnight(monkeypatch):
+    late = [["서울", None, 1430], ["광명", 1445, 1446], ["부산", 1600, None]]  # 월요일 23:50 출발, 화요일 00:06 광명
+    monkeypatch.setattr(state, "timetable", {"days": {"0": {"trains": {**timetable.build_day(ROWS, STATIONS),
+                                                                        "105": late}}}})
+    run = timetable.train_run("101", date(2026, 9, 14), "광명", "06:16")
+    assert [s["name"] for s in run["stops"]] == ["서울", "광명", "울산(통도사)", "부산"]
+    assert run["stops"][0] == {"name": "서울", "arr": None, "dep": "06:00"}
+    assert run["track"][:3] == ["서울", "광명", "천안아산"] and run["track"][-1] == "부산"
+    assert timetable.train_run("105", date(2026, 9, 15), "광명", "00:06")["stops"][1]["dep"] == "00:06"
+    assert timetable.train_run("101", date(2026, 9, 14), "대전", "07:00") is None  # 대전에 서지 않음
+    assert timetable.train_run("999", date(2026, 9, 14), "서울", "06:00") is None

@@ -3,13 +3,14 @@ import {
   App, Button, Card, Checkbox, DatePicker, Empty, Flex, InputNumber, Radio, Table, Tag, TimePicker,
   Typography, theme,
 } from 'antd'
-import { EnvironmentOutlined, LoadingOutlined, SearchOutlined, SwapOutlined } from '@ant-design/icons'
+import { EnvironmentOutlined, LoadingOutlined, NodeIndexOutlined, SearchOutlined, SwapOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import {
   api, groupOf, trainTimes, useConfig, type Basis, type Channel, type Config, type SeatState, type Train, type Watch,
 } from './api'
 import SearchSelect from './SearchSelect'
 import StationMap from './StationMap'
+import TrainRoute from './TrainRoute'
 import ChannelPicker, { emptyPick, type ChannelPick } from './ChannelPicker'
 
 const SEAT_TAG: Record<SeatState, [string, string]> = {
@@ -83,6 +84,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
   const [dep, setDep] = useState(saved.dep)
   const [arr, setArr] = useState(saved.arr)
   const [mapOpen, setMapOpen] = useState(false)
+  const [routeOf, setRouteOf] = useState<Train | null>(null) // 운행 정보를 보는 열차
   // 출발역에서 갈아타지 않고 갈 수 있는 도착역. 시간표에 없는 역이면 제한하지 않는다
   const reachable = dep ? config.routes[dep] : undefined
   const ARR_OPTIONS = useMemo(
@@ -241,6 +243,20 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
         style={{ width: '100%', height: 44 }}
       />
     </div>
+  )
+
+  // 카드를 누르면 선택이 바뀌므로 이 버튼은 누름을 카드로 넘기지 않는다
+  const routeButton = (t: Train) => (
+    <Button
+      type="text" size="small" icon={<NodeIndexOutlined />} aria-label={`${t.no} 운행 정보`}
+      onClick={(e) => {
+        e.stopPropagation()
+        setRouteOf(t)
+      }}
+      style={{ color: token.colorTextSecondary }}
+    >
+      노선
+    </Button>
   )
 
   const section = (title: string, children: ReactNode, extra?: ReactNode) => (
@@ -413,6 +429,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
                       <Flex vertical gap={4} align="end" style={{ fontSize: 12 }}>
                         <span>일반 {seatTag(t.general, loading)}</span>
                         <span>특실 {seatTag(t.special, loading)}</span>
+                        {routeButton(t)}
                       </Flex>
                     </Flex>
                   </div>
@@ -438,6 +455,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
                 { title: '소요', render: (_, t) => `${Math.floor(t.minutes / 60)}시간 ${t.minutes % 60}분` },
                 { title: '일반실', render: (_, t) => seatTag(t.general, loading) },
                 { title: '특실', render: (_, t) => seatTag(t.special, loading) },
+                { title: '', width: 88, render: (_, t) => routeButton(t) },
               ]}
             />
           )}
@@ -446,6 +464,14 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
           {loading && <LoadingOutlined style={{ marginRight: 6 }} />}
           {selected.length ? `${selected.length}편 선택` : `전체 ${trains.length}편`}
         </Tag>,
+      )}
+
+      {routeOf && (
+        <TrainRoute
+          // 조회한 뒤 역을 바꿨을 수 있어 조회한 조건의 역을 쓴다
+          train={routeOf} name={typeName(routeOf)} dep={JSON.parse(searchedFor)[0]} arr={JSON.parse(searchedFor)[1]} mobile={mobile}
+          onClose={() => setRouteOf(null)}
+        />
       )}
 
       {section('알림 채널', <ChannelPicker value={pick} onChange={setPick} channels={channels} />)}

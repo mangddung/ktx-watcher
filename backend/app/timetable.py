@@ -273,6 +273,39 @@ def track(a: str, b: str) -> tuple[str, ...]:
     return (a, b)
 
 
+def _way(names: list[str]) -> list[str]:
+    """정차역들을 선로를 따라 이은 경로(지나는 역 포함)."""
+    way = names[:1]
+    for a, b in zip(names, names[1:]):
+        way += track(a, b)[1:]
+    return way
+
+
+def _hhmm(m: int | None) -> str | None:
+    return None if m is None else f"{m // 60 % 24:02d}:{m % 60:02d}"
+
+
+def train_run(no: str, day: date, dep: str, time: str) -> dict | None:
+    """day 에 dep 역을 time(HH:MM)에 떠나는 no 열차의 전체 운행(시간표 기준, 앱의 역만). 시간표에 없으면 None.
+
+    자정 넘어 dep 역을 떠나는 열차는 전날 요일 시간표에 있어서 전날도 본다. 시각까지 맞는 것을 먼저 고르고,
+    없으면(시간표와 몇 분 다름) dep 역에 서는 같은 번호 열차를 쓴다.
+    """
+    h, m = map(int, time.split(":"))
+    found = []
+    for back in (0, 1):
+        d = state.timetable["days"].get(str((day - timedelta(days=back)).weekday()))
+        stops = d["trains"].get(no) if d else None
+        at = next((s for s in stops or [] if s[0] == dep), None)
+        if at:
+            found.append((at[2] != back * 1440 + h * 60 + m, back, stops))
+    if not found:
+        return None
+    stops = min(found)[2]
+    return {"stops": [{"name": s[0], "arr": _hhmm(s[1]), "dep": _hhmm(s[2])} for s in stops],
+            "track": _way([s[0] for s in stops])}
+
+
 def route_paths(dep: str, arr: str) -> list[dict]:
     """dep→arr 직통 열차가 지나는 선로 경로. 정차역이 달라도 같은 선로로 가면 한 경로로 묶는다.
     weekly 는 묶음별 주간 편수(요일마다 하루치 시간표를 더한 값). 편수가 많은 경로부터."""
@@ -283,9 +316,7 @@ def route_paths(dep: str, arr: str) -> list[dict]:
             if dep not in names or arr not in names[names.index(dep) + 1:]:
                 continue
             seg = names[names.index(dep):names.index(arr) + 1]
-            way = [seg[0]]
-            for a, b in zip(seg, seg[1:]):
-                way += track(a, b)[1:]
+            way = _way(seg)
             p = paths.setdefault(tuple(way), {"track": way, "stops": set(), "weekly": Counter()})
             p["stops"].update(seg)
             label, _ = guess(int(no))

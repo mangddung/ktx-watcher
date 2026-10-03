@@ -3,9 +3,9 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -152,6 +152,17 @@ async def station_route(dep: str, arr: str):
     if dep not in state.stations or arr not in state.stations or dep == arr:
         raise HTTPException(400, "출발역과 도착역을 확인하세요.")
     return {"paths": timetable.route_paths(dep, arr)}
+
+
+@router.get("/map/train")
+async def train_route(
+    date: date, dep: str, no: str = Query(pattern=r"^\d{1,5}$"), time: str = Query(pattern=r"^\d{2}:\d{2}$"),
+):
+    """date 에 dep 역을 time 에 떠나는 no 열차의 정차역·시각과 선로(열차 시간표 기준)."""
+    run = timetable.train_run(f"{int(no):03d}", date, dep, time)
+    if run is None:
+        raise HTTPException(404, "시간표에 없는 열차입니다.")
+    return run
 
 
 @router.get("/health")

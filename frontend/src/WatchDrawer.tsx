@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { api, useConfig, type Channel, type Watch, type WatchDetail } from './api'
 import { KIND_LABEL, ViewerSelect } from './ChannelPicker'
 import { rangeLabel } from './WatchList'
+import { RouteMap } from './StationMap'
 
 const time = (t: number | null) => (t ? dayjs(t).format('M/D(dd) HH:mm:ss') : '-')
 const day = (d: string) => dayjs(d).format('M/D(dd)')
@@ -88,6 +89,11 @@ export default function WatchDrawer({ w, channels, onClose, onChanged }: {
               : '조건에 맞는 열차 전체',
           },
         ]} />
+
+        <div>
+          <Typography.Title level={5}>노선</Typography.Title>
+          <RouteMap stations={config.stations} dep={w.dep} arr={w.arr} still routeOnly height={240} />
+        </div>
 
         <Descriptions title="현황" size="small" column={1} bordered items={[
           {

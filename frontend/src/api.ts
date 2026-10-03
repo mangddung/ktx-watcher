@@ -130,6 +130,12 @@ export interface RoutePath {
   weekly: Record<string, number>
 }
 
+// 열차 한 편의 정차역·시각(시간표 기준, 앱의 역만)과 선로를 따라 지나는 역들
+export interface TrainRun {
+  stops: { name: string; arr: string | null; dep: string | null }[]
+  track: string[]
+}
+
 export interface Me {
   id: string
   name: string | null
@@ -212,6 +218,8 @@ export const api = {
   map: () => request<StationMapData>('GET', '/api/map'),
   route: (dep: string, arr: string) =>
     request<{ paths: RoutePath[] }>('GET', `/api/map/route?dep=${encodeURIComponent(dep)}&arr=${encodeURIComponent(arr)}`),
+  trainRun: (no: string, date: string, dep: string, time: string) =>
+    request<TrainRun>('GET', `/api/map/train?${new URLSearchParams({ no, date, dep, time })}`),
   health: () => request<Health>('GET', '/api/health'),
   overview: () => request<Overview>('GET', '/api/overview'),
   watches: () => request<Watch[]>('GET', '/api/watches'),
