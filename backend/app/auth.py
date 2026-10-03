@@ -57,11 +57,14 @@ async def callback(request: Request, code: str = "", error: str = ""):
                     return RedirectResponse("/?login=failed", status_code=302)
                 token = (await r.json())["access_token"]
             async with http.get(ME_URL, headers={"Authorization": f"Bearer {token}"}) as r:
+                if r.status != 200:
+                    log.warning("로그인 실패: 사용자 조회 HTTP %s", r.status)
+                    return RedirectResponse("/?login=failed", status_code=302)
                 user = await r.json()
-    except (aiohttp.ClientError, KeyError, TimeoutError) as e:
+        uid = int(user["id"])
+    except (aiohttp.ClientError, KeyError, TimeoutError, ValueError) as e:
         log.warning("로그인 실패: %s", type(e).__name__)
         return RedirectResponse("/?login=failed", status_code=302)
-    uid = int(user["id"])
     if uid not in s.admin_ids:
         log.warning("로그인 거부 (관리자 아님) user=%s", uid)
         return RedirectResponse("/?login=denied", status_code=302)

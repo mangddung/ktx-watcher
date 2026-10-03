@@ -80,6 +80,44 @@ def test_oauth_state_mismatch_is_rejected(client):
     assert r.status_code == 302 and r.headers["location"] == "/?login=invalid"
 
 
+def test_oauth_user_lookup_failure_redirects_instead_of_500(client, monkeypatch):
+    from app import auth
+
+    class Resp:
+        def __init__(self, status, body):
+            self.status, self.body = status, body
+
+        async def json(self):
+            return self.body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Http:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def post(self, *a, **kw):
+            return Resp(200, {"access_token": "t"})
+
+        def get(self, *a, **kw):
+            return Resp(401, {"message": "401: Unauthorized", "code": 0})  # id 가 없는 본문
+
+    monkeypatch.setattr(auth.aiohttp, "ClientSession", Http)
+    client.cookies.set("ktx_session", session_cookie({"oauth_state": "s"}))
+    r = client.get("/auth/callback?code=abc&state=s")
+    assert r.status_code == 302 and r.headers["location"] == "/?login=failed"
+
+
 def test_login_redirects_to_discord_with_state(client):
     r = client.get("/auth/login")
     assert r.status_code == 302
