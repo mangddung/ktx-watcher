@@ -155,3 +155,5 @@ def test_pause_and_resume_accept_empty_body(client):
     # 본문 없이도 422(형식 오류)가 아니라 서비스 검증(400)까지 간다
     assert client.post("/api/watches/99/pause", headers=h).status_code == 400
     assert client.post("/api/watches/99/resume", headers=h).status_code == 400
+    # 모르는 채널 지정 방식은 검증을 건너뛰고 채널 없이 재개되지 않게 형식 단계에서 막는다
+    assert client.post("/api/watches/99/resume", headers=h, json={"mode": "x"}).status_code == 422

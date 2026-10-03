@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -58,7 +59,7 @@ def watch_json(w: Watch) -> dict:
 
 
 class PickIn(BaseModel):
-    mode: str = "auto"
+    mode: Literal["auto", "manual"] = "auto"
     viewers: list[str] = Field(default_factory=list, max_length=50)
     channelIds: list[int] = Field(default_factory=list, max_length=20)
 
