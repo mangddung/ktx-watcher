@@ -64,6 +64,7 @@ def env():
     state.bot = None
     state.telegram = None
     state.missing_stations = []
+    state.timetable = {"days": {}}
     yield state.notifier
 
 
@@ -158,6 +159,19 @@ def test_no_matching_trains_after_scan_ends_watch(env):
     wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00", types=("KTX",))
     run(sch)
     assert get(wid).status == "ended"
+
+
+def test_empty_result_keeps_watch_while_timetable_expects_trains(env):
+    sch = make_scheduler(FakeScan([]))
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    # 9/28 은 월요일. 시간표에는 09:00 동대구 출발 열차가 있다
+    state.timetable = {"days": {"0": {"trains": {"101": [["동대구", None, 540], ["수원", 600, None]]}}}}
+    run(sch)
+    w = get(wid)
+    assert w.status == "active" and "0편" in w.last_error  # 코레일 응답 이상일 수 있어 끝내지 않는다
+    state.timetable = {"days": {}}
+    run(sch)
+    assert get(wid).status == "ended"  # 시간표에도 없으면 감시 대상 없음
 
 
 def test_paused_watch_is_not_scanned_but_still_expires(env):

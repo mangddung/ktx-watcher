@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
 
-from app import scanner, service
+from app import scanner, service, timetable
 from app.db import SessionLocal, now_kst
 from app.models import Watch, WatchSeen
 from app.scanner import TrainInfo
@@ -214,6 +214,9 @@ class Scheduler:
 
     async def evaluate(self, w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta) -> None:
         cands = targets(w, trains, now, cutoff)
+        # 코레일이 0편을 줬는데 시간표에는 남은 열차가 있으면 응답 이상일 수 있어 끝내지 않는다(시각이 지나면 끝난다)
+        expected = 0 if trains else len(
+            timetable.static_trains(w.dep, w.arr, w.start_at, w.end_at, w.time_basis, now + cutoff))
         lines = []
         with SessionLocal() as db:
             row = db.get(Watch, w.id)
@@ -235,12 +238,13 @@ class Scheduler:
                     db.delete(prev)  # 다시 매진: 기록을 지워 다음에 자리가 나면 또 알린다
             row.scan_count += 1
             row.last_scan_at = now
-            row.last_error = None  # 정상 조회로 돌아오면 지난 오류는 지운다
+            # 정상 조회로 돌아오면 지난 오류는 지운다
+            row.last_error = f"코레일 조회 결과 0편 (시간표에는 {expected}편)" if expected else None
             row.remaining = len(cands)
             row.found_count += len(lines)
             db.commit()
         if lines:
             log.info("좌석 발견 #%d %d편", w.id, len(lines))
             await service.notify_watch(w.id, "취소표 발견", body="\n".join(lines))
-        if not cands:
+        if not cands and not expected:
             await service.end_watch(w.id, "no_targets")
