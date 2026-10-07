@@ -262,21 +262,36 @@ async def archive_watch(watch_id: int) -> None:
 
 
 async def set_viewers(watch_id: int, viewers: list[int]) -> None:
-    """자동 생성 채널의 열람자를 바꾼다. Discord 채널 권한을 먼저 바꾸고, 성공하면 기록한다."""
+    """자동 생성 채널의 열람자를 바꾼다. Discord 채널 권한을 먼저 바꾸고, 성공하면 기록한다.
+    기록은 권한 변경 이벤트와 같은 sync_viewers 로 새 세션에서 한다. 옛 열람자를 읽어 둔 세션으로 쓰면
+    Discord 응답을 기다리는 사이 이벤트가 먼저 기록한 행과 키가 겹친다."""
     with SessionLocal() as db:
         w = db.get(Watch, watch_id)
         if not w:
             raise Invalid("감시가 없습니다.")
-        managed = [c for c in w.channels if c.managed and not c.is_system and not c.broken_at]
-        if w.archived_at or not managed:
+        targets = [c.target for c in w.channels if c.managed and not c.is_system and not c.broken_at]
+        if w.archived_at or not targets:
             raise Invalid("열람자는 살아 있는 자동 생성 채널에만 지정할 수 있습니다.")
-        if not (state.bot and state.bot.ready):
-            raise Invalid("Discord 봇이 연결돼 있지 않아 채널 권한을 바꿀 수 없습니다. 봇이 연결된 뒤 다시 시도하세요.")
-        for c in managed:
-            await state.bot.set_viewers(int(c.target), viewers)
-        _set_viewers_row(db, w, viewers)
-        db.commit()
+    if not (state.bot and state.bot.ready):
+        raise Invalid("Discord 봇이 연결돼 있지 않아 채널 권한을 바꿀 수 없습니다. 봇이 연결된 뒤 다시 시도하세요.")
+    for t in targets:
+        await state.bot.set_viewers(int(t), viewers)
+    sync_viewers({t: viewers for t in targets})
     log.info("감시 #%d 열람자 %d명으로 변경", watch_id, len(set(viewers)))
+
+
+def sync_viewers(found: dict[str, list[int]]) -> None:
+    """자동 생성 채널의 Discord 권한 덮어쓰기({채널 target: 열람자 id})에 열람자 기록을 맞춘다. 열람자 기준은 Discord 다:
+    서버에서 직접 권한을 바꿔도 기록이 따라간다. 이미 같으면 쓰지 않는다."""
+    with SessionLocal() as db:
+        rows = db.execute(select(Watch, Channel.target).join(WatchChannel, WatchChannel.watch_id == Watch.id)
+                          .join(Channel, Channel.id == WatchChannel.channel_id)
+                          .where(Channel.kind == "discord_bot", Channel.managed, Channel.target.in_(list(found))))
+        for w, target in rows:
+            if {v.discord_user_id for v in w.viewers} != set(found[target]):
+                _set_viewers_row(db, w, found[target])
+                log.info("감시 #%d 열람자를 Discord 채널 권한에 맞춤 (%d명)", w.id, len(set(found[target])))
+        db.commit()
 
 
 async def pause_watch(watch_id: int) -> None:

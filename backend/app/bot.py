@@ -72,6 +72,8 @@ class Bot(discord.Client):
         chans = [(c.id, c.name) for c in g.text_channels if c.permissions_for(me).send_messages]
         for cid in service.sync_discord_channels(chans, self.system_channel_id):
             await service.channel_gone(cid, "Unknown Channel")
+        # 서버에서 직접 바꾼 채널 권한도 열람자 기록에 반영한다. 연결 직후(on_ready)엔 꺼져 있던 동안 바뀐 것까지 맞춘다
+        service.sync_viewers({str(c.id): self.channel_viewers(c) for c in g.text_channels})
 
     async def on_guild_channel_create(self, channel) -> None:
         await self.resync()
@@ -147,6 +149,21 @@ class Bot(discord.Client):
             if v not in state.settings.admin_ids:
                 overwrites[g.get_member(v) or discord.Object(id=v, type=discord.Member)] = VIEWER_ONLY
         return overwrites
+
+    def channel_viewers(self, ch) -> list[int]:
+        """채널 권한 덮어쓰기에서 열람자를 뽑는다: 멤버 단위로 채널 보기를 허용받은 사람. 역할 단위는 열람자로 치지 않는다.
+        봇 자신과 앱 관리자는 뺀다. 멤버 캐시에 있으면 다른 봇과 서버 관리자도 빼는데, GUILD_MEMBERS intent 가
+        꺼져 있으면 캐시가 없어 구분하지 못하고 그대로 둔다."""
+        ids = []
+        for t, ow in ch.overwrites.items():
+            if isinstance(t, discord.Role) or getattr(t, "type", None) is discord.Role or not ow.view_channel:
+                continue
+            if t.id == self.user.id or t.id in state.settings.admin_ids:
+                continue
+            if isinstance(t, discord.Member) and (t.bot or t.guild_permissions.administrator):
+                continue
+            ids.append(t.id)
+        return ids
 
     async def create_watch_channel(self, name: str, viewer_ids: list[int]) -> int:
         if missing := self.missing_permissions():

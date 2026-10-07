@@ -1,11 +1,14 @@
 import asyncio
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
+import discord
 import pytest
 from pykorail.exceptions import TransportError
 from sqlalchemy import select
 
 from app import db, service
+from app.bot import Bot
 from app.config import Settings
 from app.health import compute
 from app.models import Channel, Watch
@@ -440,6 +443,46 @@ def test_set_viewers_without_bot_or_managed_channel_is_rejected(env):
     with pytest.raises(service.Invalid):
         asyncio.run(service.set_viewers(plain, [7]))  # 웹훅 채널만 있음
     assert viewer_ids(wid) == [] and state.bot.calls == []
+
+
+def test_sync_viewers_follows_discord_overwrites_on_managed_channel_only(env):
+    wid = managed_watch()
+    plain = add_watch("2026-09-28 07:00", "2026-09-28 13:00", dep="서울")
+    state.bot = FakeBot()
+    asyncio.run(service.set_viewers(wid, [7, 8]))
+    with db.SessionLocal() as s:
+        plain_target = s.get(Watch, plain).channels[0].target
+    service.sync_viewers({"555": [8], plain_target: [9]})  # 서버에서 7 의 권한을 뺐다
+    assert viewer_ids(wid) == [8]
+    assert viewer_ids(plain) == []  # 자동 생성 채널이 아니면 건드리지 않는다
+
+
+def test_set_viewers_survives_permission_event_arriving_first(env):
+    class EventFirstBot(FakeBot):
+        async def set_viewers(self, channel_id, viewers):
+            # Discord 응답보다 채널 권한 변경 이벤트가 먼저 처리된 경우
+            service.sync_viewers({str(channel_id): viewers})
+
+    wid = managed_watch()
+    state.bot = FakeBot()
+    asyncio.run(service.set_viewers(wid, [7]))
+    state.bot = EventFirstBot()
+    asyncio.run(service.set_viewers(wid, [8, 9]))
+    assert viewer_ids(wid) == [8, 9]
+
+
+def test_channel_viewers_counts_member_overwrites_that_allow_view(env):
+    me = SimpleNamespace(id=2)
+    allow, deny = discord.PermissionOverwrite(view_channel=True), discord.PermissionOverwrite(view_channel=False)
+    ch = SimpleNamespace(overwrites={
+        discord.Object(id=10, type=discord.Role): allow,  # 역할 단위는 열람자가 아니다
+        discord.Object(id=1, type=discord.User): allow,  # 앱 관리자
+        discord.Object(id=2, type=discord.User): allow,  # 봇 자신
+        discord.Object(id=7, type=discord.User): allow,
+        discord.Object(id=8, type=discord.User): deny,
+        discord.Object(id=9, type=discord.User): discord.PermissionOverwrite(read_message_history=True),
+    })
+    assert Bot.channel_viewers(SimpleNamespace(user=me), ch) == [7]
 
 
 class CreatingBot(FakeBot):
