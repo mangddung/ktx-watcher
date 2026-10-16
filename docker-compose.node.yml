@@ -1,0 +1,16 @@
+# 원격 조회 노드(prod). 중앙과 공인 IP 가 다른 PC 에서 띄운다. 설정은 .env.node (.env.node.example 참고)
+# 상태가 없어 볼륨·포트가 없다. 노드가 중앙에 poll 하는 방식이라 NAT 뒤에서도 동작한다.
+# 중앙을 업데이트하면 노드도 git pull 뒤 다시 빌드한다(pykorail 버전이 다르면 중앙이 잡을 주지 않는다).
+name: ktx-node
+services:
+  node:
+    build: ./backend
+    image: ktx-watch-backend:0.2.0
+    command: python -m app.node
+    env_file: .env.node
+    environment:
+      TZ: Asia/Seoul
+    restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
