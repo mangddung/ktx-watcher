@@ -249,8 +249,8 @@ async def poll(body: PollIn, request: Request, node: Node = Depends(node_auth)):
 
 class TrainIn(BaseModel):
     date: str = Field(max_length=10)
-    no: str = Field(max_length=6)
-    type: str = Field(max_length=20)
+    no: str = Field(pattern=r"^\d{1,6}$")
+    type: str = Field(max_length=20, pattern=r"^[\w-]+$")  # KTX-산천, ITX-새마을 …
     dep_at: datetime
     arr_at: datetime
     general: Literal["avail", "short", "soldout", "none"]
@@ -275,7 +275,8 @@ async def result(body: ResultIn, request: Request, node: Node = Depends(node_aut
         return {"ok": True}
     # 노드 결과는 신뢰 경계 밖이다. 맡긴 날짜·시각 범위를 벗어난 열차가 있으면 결과를 통째로 버린다
     day, after, until = date.fromisoformat(job["day"]), datetime.fromisoformat(job["after"]), datetime.fromisoformat(job["until"])
-    if any(t.dep_at.tzinfo or t.arr_at.tzinfo or t.dep_at.date() != day or not after <= t.dep_at <= until or t.arr_at < t.dep_at for t in body.trains):
+    if any(t.dep_at.tzinfo or t.arr_at.tzinfo or t.date != job["day"] or t.dep_at.date() != day
+           or not after <= t.dep_at <= until or t.arr_at < t.dep_at for t in body.trains):
         fut.set_exception(NodeError("노드 결과가 맡긴 조회 범위를 벗어났습니다"))
         log.warning("노드 %s 결과가 조회 범위를 벗어나 버립니다", wk.name)
         return {"ok": False}

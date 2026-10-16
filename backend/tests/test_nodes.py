@@ -177,3 +177,13 @@ def test_node_result_outside_the_job_is_dropped(env):
     wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
     res, _ = serve([train("101", "2026-09-29 09:00")])  # 맡기지 않은 날짜
     assert res == {"ok": False} and env.found() == [] and get(wid).error_count == 1
+
+
+
+@pytest.mark.parametrize("field, value", [("no", "@everyone"), ("no", "1234567"), ("type", "**KTX**"), ("type", "<@1>")])
+def test_node_train_fields_that_reach_alerts_are_strict(field, value):
+    """노드 결과의 열차번호·종류는 알림 문구에 들어간다. 형식이 다르면 받지 않는다(422)."""
+    t = {**dataclasses.asdict(train("101", "2026-09-28 09:00")), field: value}
+    with pytest.raises(ValueError):
+        nodes.TrainIn(**t)
+    nodes.TrainIn(**{**t, field: {"no": "00101", "type": "KTX-산천"}[field]})
