@@ -7,6 +7,8 @@ import aiohttp
 from app.models import Channel
 
 DISCORD_API = "https://discord.com/api/v10"
+# 알림 문구에는 코레일·노드 오류 문구가 들어간다. @everyone·역할·사용자 멘션이 실제로 울리지 않게 한다
+NO_MENTIONS = {"parse": []}
 
 
 def text_limit(kind: str) -> int:
@@ -77,14 +79,16 @@ class Notifier:
         """메시지를 보내고 메시지 ID 를 돌려준다."""
         text = text[:text_limit(ch.kind)]  # 긴 글은 부르는 쪽에서 split 으로 나눠 보낸다
         if ch.kind == "discord_webhook":
-            status, body = await self._request("POST", ch.target + "?wait=true", json={"content": text})
+            status, body = await self._request(
+                "POST", ch.target + "?wait=true", json={"content": text, "allowed_mentions": NO_MENTIONS})
             if status == 404:
                 raise ChannelGone("Unknown Webhook")
         elif ch.kind == "discord_bot":
             if not self.bot_token:
                 raise SendFailed("DISCORD_BOT_TOKEN 이 없습니다")
             status, body = await self._request(
-                "POST", f"{DISCORD_API}/channels/{ch.target}/messages", json={"content": text}, headers=self._bot_headers())
+                "POST", f"{DISCORD_API}/channels/{ch.target}/messages", json={"content": text, "allowed_mentions": NO_MENTIONS},
+                headers=self._bot_headers())
             if status in (403, 404):
                 raise ChannelGone("Missing Access" if status == 403 else "Unknown Channel")
         elif ch.kind == "telegram":
