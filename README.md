@@ -15,6 +15,7 @@
 - **Discord 명령**: `/watch add 출발 도착 시작일 [끝날짜]`, `/watch list`, `/watch stop 번호`
 - **관리**: 감시 상세(열람자 변경, 종료·재개), 채널 목록, 서비스 상태, 로그(토큰·웹훅 주소 등은 가려서 남김).
 - **코레일 요청 조절**: 같은 노선·날짜의 감시는 한 번에 조회합니다. 요청은 한 줄로 세워 간격을 두고, 코레일 앱처럼 정시 단위로 보냅니다. 고른 열차만 감시하면 그 시간대만 조회합니다. 조회가 실패하면 그 사이클의 남은 요청을 보내지 않고, 연속으로 실패하면 한동안 쉽니다.
+- **조회 노드(선택)**: 공인 IP 가 다른 PC 에 노드를 붙이면 노선을 나눠 조회하고, 워커 수만큼 조회 간격이 줄어듭니다(IP 하나당 요청 속도는 그대로).
 
 ## 데이터 출처
 
@@ -58,6 +59,7 @@
 | `PAGE_GAP_MIN`, `PAGE_GAP_MAX` | 기본 1, 2 | 코레일 요청 사이 간격(초, 난수) |
 | `MAX_FAILS`, `BLOCK_COOLDOWN_MINUTES` | 기본 10, 30 | 연속 실패 몇 번에 몇 분 쉴지 |
 | `MAX_ACTIVE_WATCHES`, `MAX_WATCH_DAYS` | 기본 10, 3 | 진행 중인 감시 수, 감시 구간 최대 일수 |
+| `LOCAL_SCAN` | 기본 1 | 0 이면 이 서버는 감시 조회를 하지 않고 조회 노드만 쓴다(웹 수동 조회는 계속 이 서버 IP) |
 | `LOG_LEVEL` | 기본 INFO | DEBUG 면 페이지별 조회 로그까지 |
 
 ## 설치와 실행
@@ -93,6 +95,29 @@ docker compose -f docker-compose.dev.yml up --build   # dev (코드 수정 즉�
 
 dev 와 prod 는 같은 도메인, 같은 터널, 같은 DB(`./data/ktx.db`)를 쓰고 동시에 뜨지 않는다(같은 compose 프로젝트라 한쪽을 `up` 하면 다른 쪽 컨테이너가 교체된다).
 마이그레이션은 시작할 때 자동으로 적용되니, 큰 변경 전에는 `./data` 를 백업한다. 로그는 `docker compose logs -f backend` 또는 웹의 로그 탭에서 본다.
+
+### 4. 조회 노드 (선택)
+
+공인 IP 가 다른 PC 에서 코레일 조회를 나눠 맡는다. 같은 PC·같은 공유기 뒤의 노드는 IP 가 같아 의미가 없다(웹에 "같은 IP" 경고가 뜬다).
+노드는 중앙에 poll 해서 잡을 가져가는 방식이라 노드 PC 에 포트를 열 필요가 없다. 중앙은 터널로 공개돼 있어야 한다.
+
+1. **Access 서비스 토큰**(도메인에 Access 를 걸었으면): Zero Trust > Access > Service Auth > Service Tokens 에서 토큰을 만들고 Client ID·Secret 을 적어 둔다.
+   그다음 Access > Applications > 이 도메인 앱 > Policies 에 Action `Service Auth`, Include `Service Token` = 방금 만든 토큰인 정책을 추가한다.
+   서비스 토큰으로는 Access 만 통과한다. 관리 API 는 여전히 Discord 로그인이 있어야 하고, 노드 API 는 노드 토큰만 받는다.
+2. **노드 토큰**: 웹 > 조회 노드 > 노드 추가. 토큰은 발급할 때 한 번만 보인다. 잃어버리면 폐기하고 새로 발급한다.
+3. **노드 PC** 에서:
+
+```bash
+git clone <이 저장소> ktx && cd ktx
+cp .env.node.example .env.node   # CENTRAL_URL, NODE_TOKEN, CF_ACCESS_CLIENT_ID/SECRET 채우기
+docker compose -f docker-compose.node.yml up -d --build
+```
+
+중앙을 업데이트하면 노드도 `git pull` 뒤 같은 명령으로 다시 빌드한다. pykorail 버전이 중앙과 다르면 중앙이 잡을 주지 않고 웹에 "버전 불일치"로 나온다.
+개발 중에는 `cd backend && CENTRAL_URL=http://localhost:12970 NODE_TOKEN=... python -m app.node` 로 바로 띄운다.
+
+노드 상태(온라인·오프라인·쿨다운·차단 의심, 접속 IP, 맡은 노선, 1시간 성공·실패)는 웹의 조회 노드 탭에서 본다.
+워커마다 연속 실패·쿨다운을 따로 세서, 노드 하나가 막히면 그 노드만 빠지고 노선은 남은 워커가 맡는다.
 
 ## 개발
 
