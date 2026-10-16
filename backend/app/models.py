@@ -97,3 +97,18 @@ class AdminSession(Base):
 
     uid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     sid: Mapped[str] = mapped_column(String(64))
+
+
+class Node(Base):
+    """원격 조회 노드. 토큰 원문은 발급 응답에만 있고 여기에는 해시만 둔다(nodes.py)."""
+
+    __tablename__ = "node"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(40))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    token_prefix: Mapped[str] = mapped_column(String(12))  # 화면에서 구분용(ktxn_ab12)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_kst)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)

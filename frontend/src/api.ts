@@ -91,8 +91,27 @@ export interface Health {
   level: HealthLevel
   title: string
   reasons: { label: string; value: string }[]
+  notes: { label: string; value: string }[] // 등급과 무관한 안내(노선 공유 등)
   errors1h: number
   failRate1h: number
+}
+
+export type NodeStatus = 'online' | 'offline' | 'cooldown' | 'blocked' | 'version'
+
+// 조회 워커. local 이면 중앙(이 서버)이고 id·prefix 가 없다
+export interface NodeInfo {
+  id: number | null
+  name: string
+  local: boolean
+  prefix: string | null
+  status: NodeStatus
+  ip: string | null
+  sameIp: boolean
+  version: string | null
+  lastSeen: number | null
+  routes: string[]
+  ok1h: number
+  fail1h: number
 }
 
 export interface Overview {
@@ -238,6 +257,10 @@ export const api = {
   addWebhook: (name: string, url: string) => request<Channel>('POST', '/api/channels/webhook', { name, url }),
   deleteChannel: (id: number) => request('DELETE', `/api/channels/${id}`),
   testChannel: (id: number) => request('POST', `/api/channels/${id}/test`),
+  nodes: () => request<NodeInfo[]>('GET', '/api/nodes'),
+  // 원문 토큰은 이 응답에서만 받는다
+  issueNode: (name: string) => request<{ id: number; token: string }>('POST', '/api/nodes', { name }),
+  revokeNode: (id: number) => request('DELETE', `/api/nodes/${id}`),
   logout: () => request('POST', '/auth/logout'),
 }
 

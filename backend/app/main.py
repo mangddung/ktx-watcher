@@ -12,7 +12,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import db, selftest, service, timetable
+from app import db, nodes, selftest, service, timetable
 from app.api import router as api_router
 from app.auth import router as auth_router
 from app.config import get_settings, startup_problems
@@ -88,7 +88,9 @@ async def lifespan(_: FastAPI):
         tasks.append(asyncio.create_task(timetable.refresh_loop(settings.data_go_kr_key), name="timetable"))
     else:
         log.info("DATA_GO_KR_KEY 가 없어 앱에 들어 있는 열차 시간표를 그대로 씁니다")
-    state.scheduler = Scheduler()
+    state.scheduler = Scheduler(local=settings.local_scan)
+    if not settings.local_scan:
+        log.info("LOCAL_SCAN=0: 감시 조회는 노드만 합니다")
     state.scheduler.task = asyncio.create_task(state.scheduler.run(), name="scheduler")
     tasks.append(state.scheduler.task)
     tasks.append(asyncio.create_task(selftest.run(), name="selftest"))
@@ -111,3 +113,4 @@ app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, sessio
                    max_age=14 * 24 * 3600, same_site="lax", https_only=settings.secure_cookie)
 app.include_router(auth_router)
 app.include_router(api_router)
+app.include_router(nodes.router)

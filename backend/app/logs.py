@@ -13,6 +13,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}"), "****"),  # bot<토큰> 처럼 글자 뒤에 붙어도 잡는다
     # Discord 봇 토큰
     (re.compile(r"\b[MNO][A-Za-z\d_-]{22,30}\.[A-Za-z\d_-]{5,8}\.[A-Za-z\d_-]{25,45}\b"), "****"),
+    # 노드 토큰
+    (re.compile(r"ktxn_[\w-]+"), "ktxn_****"),
     # Authorization 헤더
     (re.compile(r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?)(?:bot |bearer )?[^\s'\",}]+"), r"\1****"),
     # OAuth code/state, 세션 쿠키

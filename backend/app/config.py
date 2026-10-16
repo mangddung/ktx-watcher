@@ -65,6 +65,7 @@ class Settings:
     block_cooldown_minutes: int = 30
     max_active: int = 10
     max_watch_days: int = 3
+    local_scan: bool = True  # 0 이면 중앙은 감시 조회를 하지 않고 노드만 쓴다(웹 수동 조회는 계속 중앙 IP)
     log_level: str = "INFO"
     database_url: str = "sqlite:///data/ktx.db"
 
@@ -104,6 +105,7 @@ def get_settings() -> Settings:
         block_cooldown_minutes=_int("BLOCK_COOLDOWN_MINUTES", 30),
         max_active=_int("MAX_ACTIVE_WATCHES", 10),
         max_watch_days=_int("MAX_WATCH_DAYS", 3),
+        local_scan=env("LOCAL_SCAN", "1").strip() != "0",
         log_level=env("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         database_url=env("DATABASE_URL", "sqlite:///data/ktx.db").strip(),
     )

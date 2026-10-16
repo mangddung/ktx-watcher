@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Literal
 
@@ -11,12 +12,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import scanner, service, timetable
+from app import nodes, scanner, service, timetable
 from app.auth import require_admin
 from app.db import SessionLocal, now_kst
 from app.health import compute as compute_health
 from app.logs import ring
-from app.models import Channel, Watch, WatchSeen
+from app.models import Channel, Node, Watch, WatchSeen
 from app.notify import WEBHOOK_PREFIXES, ChannelGone, SendFailed
 from app.stations import SEAT_CLASSES, STATION_MAP, TRAIN_GROUPS
 from app.state import state
@@ -99,6 +100,10 @@ class SearchIn(BaseModel):
     end: datetime
     basis: str = "dep"
     passengers: int = 1
+
+
+class NodeIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
 
 
 class WebhookIn(BaseModel):
@@ -351,3 +356,43 @@ async def members():
 async def logs(level: str = "INFO"):
     minimum = LEVELS.get(level.upper(), 20)
     return [line for line in ring.lines if LEVELS.get(line["level"], 50) >= minimum][-1000:]
+
+
+@router.get("/nodes")
+async def node_list():
+    """조회 워커 목록. 중앙(로컬 워커)이 맨 앞이고, 폐기하지 않은 노드는 재시작 뒤 아직 poll 하지 않았어도 나온다."""
+    sch = state.scheduler
+    now = sch.clock()
+    with SessionLocal() as db:
+        rows = db.scalars(select(Node).where(Node.revoked_at.is_(None)).order_by(Node.id)).all()
+    routes: dict[str, list[str]] = {}
+    for (dep, arr), key in sorted(sch.routes.items()):
+        routes.setdefault(key, []).append(f"{dep}→{arr}")
+    same = {ip for ip, n in Counter(w.ip for w in sch.workers.values() if w.remote and w.online(now)).items() if n > 1}
+
+    def one(wk, row: Node | None) -> dict:
+        hist = [ok for at, ok, _ in (wk.history if wk else []) if at >= now - timedelta(hours=1)]
+        ip = (wk and wk.ip) or (row and row.last_ip)
+        return {"id": row.id if row else None, "name": row.name if row else wk.name, "local": row is None,
+                "prefix": row.token_prefix if row else None, "status": wk.status(now) if wk else "offline",
+                "ip": ip, "sameIp": ip in same, "version": getattr(wk, "version", None),
+                "lastSeen": ms(getattr(wk, "last_poll", None) or (row and row.last_seen_at)),
+                "routes": routes.get(wk.key, []) if wk else [], "ok1h": sum(hist), "fail1h": len(hist) - sum(hist)}
+
+    out = [one(sch.local, None)] if sch.local else []
+    return out + [one(sch.workers.get(f"node:{r.id}"), r) for r in rows]
+
+
+@router.post("/nodes")
+async def node_issue(body: NodeIn):
+    """원문 토큰은 이 응답에서만 볼 수 있다."""
+    if not body.name.strip():
+        raise HTTPException(400, "노드 이름을 입력하세요.")
+    return nodes.issue(body.name.strip())
+
+
+@router.delete("/nodes/{node_id}")
+async def node_revoke(node_id: int):
+    if not nodes.revoke(node_id):
+        raise HTTPException(404, "노드가 없습니다.")
+    return {"ok": True}

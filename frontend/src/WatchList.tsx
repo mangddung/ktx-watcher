@@ -343,6 +343,9 @@ function HealthBanner({ h, onClick }: { h: Health; onClick: () => void }) {
               ))}
             </div>
           )}
+          {h.notes.map((n) => (
+            <div key={n.label} style={{ fontSize: 13, color: token.colorTextSecondary, marginTop: 4 }}>{n.label} · {n.value}</div>
+          ))}
         </div>
       </Flex>
     </button>

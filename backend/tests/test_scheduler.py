@@ -221,7 +221,7 @@ def test_notify_error_is_not_counted_as_scan_failure(env):
     add_watch("2026-09-28 07:00", "2026-09-28 12:00")
     env.error = RuntimeError("boom")
     run(sch)
-    assert sch.fails == 0 and all(ok for _, ok, _ in sch.history)
+    assert sch.local.fails == 0 and all(ok for _, ok, _ in sch.history)
 
 
 def test_paused_watch_is_not_scanned_but_still_expires(env):
@@ -259,7 +259,7 @@ def test_repeated_block_errors_pause_scanning_and_go_critical(env):
     sch = make_scheduler(scan)
     wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
     run(sch, 3)
-    assert sch.cooldown_until is not None
+    assert sch.local.cooldown_until is not None
     assert compute()["level"] == "critical"
     calls = len(scan.calls)
     run(sch)  # 쿨다운 중에는 요청하지 않는다
@@ -268,7 +268,7 @@ def test_repeated_block_errors_pause_scanning_and_go_critical(env):
     sch.clock = lambda: NOW + timedelta(minutes=31)
     scan.error = None
     run(sch)  # 쿨다운이 끝나면 다시 조회한다
-    assert len(scan.calls) == calls + 1 and sch.cooldown_until is None
+    assert len(scan.calls) == calls + 1 and sch.local.cooldown_until is None
 
 
 def test_single_error_is_warning(env):

@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import koKR from 'antd/locale/ko_KR'
 import {
-  DesktopOutlined, DiscordOutlined, FileTextOutlined, LogoutOutlined, MoonOutlined, NotificationOutlined, PlusOutlined,
+  CloudServerOutlined, DesktopOutlined, DiscordOutlined, FileTextOutlined, LogoutOutlined, MoonOutlined, NotificationOutlined, PlusOutlined,
   SunOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import {
@@ -14,9 +14,10 @@ import WatchList from './WatchList'
 import AddWatch from './AddWatch'
 import Channels from './Channels'
 import Logs from './Logs'
+import Nodes from './Nodes'
 
 type ThemeMode = 'system' | 'light' | 'dark'
-export type Tab = 'watches' | 'add' | 'channels' | 'logs'
+export type Tab = 'watches' | 'add' | 'channels' | 'nodes' | 'logs'
 
 const THEME_KEY = 'ktx.theme'
 
@@ -83,12 +84,13 @@ export default function App() {
   )
 }
 
-const TITLES: Record<Tab, string> = { watches: '감시 목록', add: '감시 추가', channels: '알림 채널', logs: '로그' }
+const TITLES: Record<Tab, string> = { watches: '감시 목록', add: '감시 추가', channels: '알림 채널', nodes: '조회 노드', logs: '로그' }
 
 const TABS: { key: Tab; label: string; icon: ReactNode }[] = [
   { key: 'watches', label: '감시', icon: <UnorderedListOutlined /> },
   { key: 'add', label: '추가', icon: <PlusOutlined /> },
   { key: 'channels', label: '채널', icon: <NotificationOutlined /> },
+  { key: 'nodes', label: '노드', icon: <CloudServerOutlined /> },
   { key: 'logs', label: '로그', icon: <FileTextOutlined /> },
 ]
 
@@ -244,6 +246,7 @@ function Shell({ mode, onMode }: { mode: ThemeMode; onMode: (m: ThemeMode) => vo
         />
       )}
       {tab === 'channels' && <Channels channels={channels} watches={watches} onChanged={refresh} />}
+      {tab === 'nodes' && <Nodes />}
       {tab === 'logs' && <Logs initialMin={logMin} />}
     </ConfigContext.Provider>
   )

@@ -3,13 +3,13 @@
 import asyncio
 import logging
 import random
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
 
-from app import scanner, service, timetable
+from app import nodes, scanner, service, timetable
 from app.db import SessionLocal, now_kst
 from app.models import Watch, WatchSeen
 from app.scanner import TrainInfo
@@ -26,6 +26,8 @@ PICK_MARGIN = timedelta(minutes=30)
 RETRIES = 2
 # 포기한 알림을 상태 경고와 감시의 마지막 오류로 보여주는 기간
 UNDELIVERED_SHOWN = timedelta(hours=1)
+# 워커가 많아도 사이클 사이에 이만큼(초)은 쉰다
+MIN_INTERVAL = 3
 
 
 @dataclass
@@ -47,6 +49,11 @@ class Group:
     after: datetime
     until: datetime
     watch_ids: set[int] = field(default_factory=set)
+
+
+def tag(wk: nodes.Worker) -> str:
+    """로그·시스템 알림 앞에 붙이는 워커 이름. 중앙은 붙이지 않는다(노드가 없을 때 지금과 같은 문구)."""
+    return f"[노드 {wk.name}] " if wk.remote else ""
 
 
 def watch_days(w: Watch) -> list[date]:
@@ -107,13 +114,16 @@ def targets(w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta)
 
 
 class Scheduler:
-    def __init__(self, scan_day=scanner.scan_day, clock=now_kst) -> None:
-        self.scan_day = scan_day
+    def __init__(self, scan_day=scanner.scan_day, clock=now_kst, local: bool = True) -> None:
         self.clock = clock
-        self.fails = 0  # 연속으로 실패한 사이클 수
-        self.cooldown_until: datetime | None = None
-        self.block_since: datetime | None = None
-        self.history: deque[tuple[datetime, bool, bool]] = deque(maxlen=5000)  # (시각, 성공, 차단 의심)
+        # 조회 워커. 중앙(local)과 poll 해 온 원격 노드(nodes.RemoteWorker). LOCAL_SCAN=0 이면 중앙은 조회하지 않는다
+        self.local = nodes.Worker(scan_day) if local else None
+        self.workers: dict[str, nodes.Worker] = {"local": self.local} if local else {}
+        self.history: deque[tuple[datetime, bool, bool]] = deque(maxlen=5000)  # 모든 워커의 (시각, 성공, 차단 의심)
+        self.sticky: dict[tuple[str, str], str] = {}  # 노선 → 계속 맡는 워커(nodes.assign)
+        self.routes: dict[tuple[str, str], str] = {}  # 이번 사이클의 노선 → 워커
+        self.sharing = False  # 노선이 워커보다 적어 노선을 여러 IP 가 나눠 조회하는 중
+        self.turn = 0
         self.last_cycle_at: datetime | None = None
         self.cycle_seconds = 0
         self.next_cycle_at: datetime | None = None
@@ -123,27 +133,36 @@ class Scheduler:
         self.unsent: dict[tuple[int, int], Unsent] = {}  # (감시 id, 채널 id) → 못 보낸 좌석
         self.undelivered: deque[tuple[datetime, int, str]] = deque(maxlen=100)  # 재시도 끝에 포기한 알림 (시각, 감시 id, 사유)
 
-    def record(self, ok: bool, block: bool = False) -> None:
+    def record(self, wk: nodes.Worker, ok: bool, block: bool = False) -> None:
         now = self.clock()
+        wk.record(now, ok, block)
         self.history.append((now, ok, block))
-        if block:
-            self.block_since = self.block_since or now
-        elif ok:
-            self.block_since = None
+
+    def ready(self, now: datetime) -> list[nodes.Worker]:
+        """지금 조회를 맡길 수 있는 워커(key 순). 쿨다운이 끝난 워커는 여기서 풀어 준다."""
+        out = []
+        for wk in list(self.workers.values()):
+            if wk.cooldown_until and now >= wk.cooldown_until:
+                log.info("%s쿨다운 끝, 조회를 다시 시작합니다", tag(wk))
+                wk.cooldown_until = None
+            if wk.online(now) and not wk.cooldown_until:
+                out.append(wk)
+        return sorted(out, key=lambda w: w.key)
 
     async def run(self) -> None:
-        s = state.settings
         while True:
             try:
                 await self.cycle()
             except Exception:
                 log.exception("스케줄러 사이클 오류")
             await self.check_health()
-            wait = random.uniform(*s.scan_interval)
-            if self.cooldown_until:
-                wait = max(wait, (self.cooldown_until - self.clock()).total_seconds())
+            wait = self.wait_seconds()
             self.next_cycle_at = self.clock() + timedelta(seconds=wait)
             await asyncio.sleep(wait)
+
+    def wait_seconds(self) -> float:
+        """워커가 N 개면 간격을 1/N 로 줄인다. 워커마다 맡은 노선만 조회하니 IP 하나당 요청 속도는 그대로다."""
+        return max(MIN_INTERVAL, random.uniform(*state.settings.scan_interval) / max(1, len(self.ready(self.clock()))))
 
     async def check_health(self) -> None:
         from app.health import compute
@@ -157,11 +176,6 @@ class Scheduler:
         s = state.settings
         cutoff = timedelta(minutes=s.cutoff_minutes)
         started = self.clock()
-        if self.cooldown_until:
-            if started < self.cooldown_until:
-                return
-            log.info("쿨다운 끝, 조회를 다시 시작합니다")
-            self.cooldown_until = None
 
         with SessionLocal() as db:
             watches = list(db.scalars(select(Watch).where(Watch.status.in_(("active", "paused")))))
@@ -174,45 +188,44 @@ class Scheduler:
         groups = build_groups(active, started, cutoff)
         self.groups = len(groups)
 
-        # 감시가 필요로 하는 조회 묶음. 같은 노선·인원수의 날짜들이 연달아 조회되도록 정렬해서,
+        # 노선을 워커에 나눠 맡긴다. 한 감시의 조회 묶음은 모두 같은 노선이라 한 워커가 맡는다
+        workers = self.ready(started)
+        load = Counter(k[:2] for k in groups)
+        self.routes = nodes.assign(load, [w.key for w in workers], self.sticky, self.turn)
+        self.turn += 1
+        self.sharing = 0 < len(load) < len(workers)
+
+        # 워커 안에서는 같은 노선·인원수의 날짜들이 연달아 조회되도록 정렬해서,
         # 여러 날에 걸친 감시도 자기 날짜 조회가 끝나는 즉시 알림을 보낸다
         keys_of = {w.id: [k for k, g in groups.items() if w.id in g.watch_ids] for w in active}
         order = sorted(groups, key=lambda k: (k[0], k[1], k[3], k[2]))
         results: dict[tuple, list[TrainInfo]] = {}
         done: set[int] = set()
-        error: str | None = None
-        for key in order:
-            g = groups[key]
-            try:
-                results[key] = await asyncio.to_thread(
-                    self.scan_day, state.gate, g.dep, g.arr, g.day, g.after, g.until, g.passengers)
-            except Exception as e:
-                self.record(False, scanner.is_block_error(e))
-                error = f"{type(e).__name__}: {e}"[:300]
-                log.error("%s→%s %s 조회 실패: %s (연속 %d/%d)", g.dep, g.arr, f"{g.day:%m/%d}", error,
-                          self.fails + 1, s.max_fails)
-                break  # 차단일 수 있으니 이번 사이클의 나머지 요청은 보내지 않는다
-            self.record(True)
-            # 필요한 조회가 모두 끝난 감시는 사이클 끝을 기다리지 않고 바로 비교하고 알린다
-            for w in active:
-                if w.id in g.watch_ids and w.id not in done and all(k in results for k in keys_of[w.id]):
-                    done.add(w.id)
-                    await self.evaluate_safe(w, [t for k in keys_of[w.id] for t in results[k]], self.clock(), cutoff)
+        errors: dict[str, str] = {}  # 워커 key → 이번 사이클 오류
 
-        if error:
-            self.fails += 1
-            if self.fails == 1:
-                await service.system(f"조회 오류 (재시도 중): {error}")
-            if self.fails >= s.max_fails:
-                self.cooldown_until = self.clock() + timedelta(minutes=s.block_cooldown_minutes)
-                log.error("연속 실패 %d회, %d분 동안 조회를 멈춥니다", self.fails, s.block_cooldown_minutes)
-                await service.system(
-                    f"조회 중단: 연속 실패 {self.fails}회. {s.block_cooldown_minutes}분 뒤 다시 시도합니다. 마지막 오류: {error}")
-                self.fails = 0
-        elif groups and self.fails:
-            await service.system(f"조회 복구 ({self.fails}회 연속 실패 후)")
-            log.info("조회 복구 (%d회 연속 실패 후)", self.fails)
-            self.fails = 0
+        async def work(wk: nodes.Worker, keys: list[tuple]) -> None:
+            for key in keys:
+                g = groups[key]
+                try:
+                    results[key] = await wk.scan(g)
+                except Exception as e:
+                    self.record(wk, False, scanner.is_block_error(e) or getattr(e, "block", False))
+                    errors[wk.key] = f"{type(e).__name__}: {e}"[:300]
+                    log.error("%s%s→%s %s 조회 실패: %s (연속 %d/%d)", tag(wk), g.dep, g.arr, f"{g.day:%m/%d}",
+                              errors[wk.key], wk.fails + 1, s.max_fails)
+                    return  # 차단일 수 있으니 이 워커의 이번 사이클 나머지 요청은 보내지 않는다
+                self.record(wk, True)
+                # 필요한 조회가 모두 끝난 감시는 사이클 끝을 기다리지 않고 바로 비교하고 알린다
+                for w in active:
+                    if w.id in g.watch_ids and w.id not in done and all(k in results for k in keys_of[w.id]):
+                        done.add(w.id)
+                        await self.evaluate_safe(w, [t for k in keys_of[w.id] for t in results[k]], self.clock(), cutoff)
+
+        jobs = {wk: [k for k in order if self.routes.get(k[:2]) == wk.key] for wk in workers}
+        await asyncio.gather(*(work(wk, keys) for wk, keys in jobs.items() if keys))
+        for wk, keys in jobs.items():
+            if keys:
+                await self.settle(wk, errors.get(wk.key))
 
         now = self.clock()
         for w in active:
@@ -220,7 +233,9 @@ class Scheduler:
                 continue
             keys = keys_of[w.id]
             if any(k not in results for k in keys):
-                if error:
+                # 맡은 워커가 실패해서 못 본 감시만 오류로 센다(조회할 워커가 없던 감시는 세지 않는다)
+                if error := next((errors[self.routes[k[:2]]] for k in keys
+                                  if k not in results and self.routes.get(k[:2]) in errors), None):
                     with SessionLocal() as db:
                         row = db.get(Watch, w.id)
                         row.error_count += 1
@@ -232,7 +247,26 @@ class Scheduler:
         self.last_cycle_at = self.clock()
         self.cycle_seconds = int((self.last_cycle_at - started).total_seconds())
         if groups:
-            log.info("사이클 완료 %d묶음 %d초, 오류 %s", len(groups), self.cycle_seconds, "있음" if error else "없음")
+            log.info("사이클 완료 %d묶음 워커 %d개 %d초, 오류 %s", len(groups), len(workers), self.cycle_seconds,
+                     ", ".join(w.name for w in workers if w.key in errors) or "없음")
+
+    async def settle(self, wk: nodes.Worker, error: str | None) -> None:
+        """한 워커의 사이클 결과로 연속 실패를 센다. max_fails 번 연속 실패하면 그 워커만 쿨다운에 들어간다."""
+        s = state.settings
+        if error:
+            wk.fails += 1
+            if wk.fails == 1:
+                await service.system(f"{tag(wk)}조회 오류 (재시도 중): {error}")
+            if wk.fails >= s.max_fails:
+                wk.cooldown_until = self.clock() + timedelta(minutes=s.block_cooldown_minutes)
+                log.error("%s연속 실패 %d회, %d분 동안 조회를 멈춥니다", tag(wk), wk.fails, s.block_cooldown_minutes)
+                await service.system(f"{tag(wk)}조회 중단: 연속 실패 {wk.fails}회. "
+                                     f"{s.block_cooldown_minutes}분 뒤 다시 시도합니다. 마지막 오류: {error}")
+                wk.fails = 0
+        elif wk.fails:
+            await service.system(f"{tag(wk)}조회 복구 ({wk.fails}회 연속 실패 후)")
+            log.info("%s조회 복구 (%d회 연속 실패 후)", tag(wk), wk.fails)
+            wk.fails = 0
 
     async def evaluate_safe(self, w: Watch, trains: list[TrainInfo], now: datetime, cutoff: timedelta) -> None:
         """비교·알림 중 오류는 그 감시만 건너뛴다. 코레일 조회 실패로 세지 않는다."""
