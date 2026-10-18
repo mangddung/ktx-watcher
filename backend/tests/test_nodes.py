@@ -187,3 +187,12 @@ def test_node_train_fields_that_reach_alerts_are_strict(field, value):
     with pytest.raises(ValueError):
         nodes.TrainIn(**t)
     nodes.TrainIn(**{**t, field: {"no": "00101", "type": "KTX-산천"}[field]})
+
+
+def test_node_ip_comes_from_cloudflare_header(admin):
+    """cloudflared 가 다른 기기에서 백엔드 포트로 바로 넘기면 접속 주소는 도커 게이트웨이다. 실제 IP 는 CF-Connecting-IP 에 있다."""
+    node = admin.post("/api/nodes", json={"name": "집"}).json()
+    for header, ip in (("203.0.113.7", "203.0.113.7"), ("not-an-ip", "testclient")):
+        admin.post("/api/node/poll", json={"version": "0.0.1"},  # 버전이 달라 기다리지 않고 409
+                   headers={"Authorization": f"Bearer {node['token']}", "CF-Connecting-IP": header})
+        assert state.scheduler.workers[f"node:{node['id']}"].ip == ip

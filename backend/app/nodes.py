@@ -7,6 +7,7 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import secrets
 from collections import deque
@@ -206,6 +207,16 @@ def node_auth(request: Request) -> Node:
     return node
 
 
+def real_ip(request: Request) -> str | None:
+    """노드의 공인 IP. 터널(cloudflared)이 nginx 를 거치지 않고 백엔드 포트로 바로 넘기면(dev, 다른 기기의 cloudflared)
+    client.host 가 도커 게이트웨이가 된다. 그래서 Cloudflare 가 채운 CF-Connecting-IP 를 먼저 본다.
+    노드 토큰을 가진 요청만 여기 오므로, 위조해도 그 노드 자신의 IP 표시만 바뀐다."""
+    try:
+        return str(ipaddress.ip_address(request.headers.get("cf-connecting-ip", "").strip()))
+    except ValueError:
+        return request.client.host if request.client else None  # prod 는 nginx 가 CF-Connecting-IP 로 채운다
+
+
 def seen(node: Node, request: Request) -> RemoteWorker:
     """요청한 노드의 워커(없으면 만든다). 마지막 접속 시각과 IP 를 남긴다."""
     sch = state.scheduler
@@ -213,7 +224,7 @@ def seen(node: Node, request: Request) -> RemoteWorker:
     if wk is None:
         wk = sch.workers[f"node:{node.id}"] = RemoteWorker(node.id, node.name)
     now = sch.clock()
-    ip = request.client.host if request.client else None  # nginx 가 CF-Connecting-IP 나 접속 주소로 채운다
+    ip = real_ip(request)
     wk.last_poll = now
     if ip != wk.ip or not wk.saved_at or now - wk.saved_at >= SAVE_EVERY:
         if ip != wk.ip:
