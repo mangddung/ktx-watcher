@@ -1,7 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Button, Flex, Modal, Result, Spin, Tag, Typography, theme } from 'antd'
+import { Button, Flex, Modal, Result, Spin, Tag, Tooltip, Typography, theme } from 'antd'
 import { api, useConfig, type Train, type TrainRun } from './api'
 import { MapView } from './StationMap'
+import { anchorTimes, type Shown } from './times'
+
+const APPROX = '평소 운행 기록으로 계산한 근사값이라 실제 시각과 다를 수 있습니다.'
+
+// 근사값은 * 를 붙이고, 마우스를 올리면(휴대폰은 누르면) 안내를 띄운다
+function Time({ t }: { t: Shown }) {
+  if (t.exact) return <>{t.time}</>
+  return (
+    <Tooltip title={APPROX}>
+      <span tabIndex={0} aria-label={`${t.time} 근사값`} style={{ cursor: 'help' }}>{t.time}*</span>
+    </Tooltip>
+  )
+}
 
 // 조회한 열차 한 편의 시종착과 정차역. 지도에 전체 운행을 옅게, 고른 구간(dep→arr)을 진하게 그린다
 export default function TrainRoute({ train, name, dep, arr, mobile, onClose }: {
@@ -24,6 +37,8 @@ export default function TrainRoute({ train, name, dep, arr, mobile, onClose }: {
   const [i, j] = [names.indexOf(dep), names.lastIndexOf(arr)]
   const inSeg = (n: number) => i <= n && n <= j
   const segment = run ? run.track.slice(run.track.indexOf(dep), run.track.lastIndexOf(arr) + 1) : []
+  // 좌석 조회로 확인한 열차(type 이 있음)만 코레일 시각이 있다. 시간표만 아는 열차는 전부 근사값
+  const times = run ? anchorTimes(run.stops, dep, arr, train.type ? { dep: train.dep, arr: train.arr } : null) : []
 
   return (
     <Modal
@@ -56,14 +71,17 @@ export default function TrainRoute({ train, name, dep, arr, mobile, onClose }: {
                   {n === i && <Tag color="blue" style={{ margin: 0 }}>출발</Tag>}
                   {n === j && <Tag color="red" style={{ margin: 0 }}>도착</Tag>}
                 </Flex>
-                <Typography.Text type={inSeg(n) ? undefined : 'secondary'} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {[s.arr, s.dep].filter(Boolean).join(' - ')}
+                <Typography.Text type={inSeg(n) ? undefined : 'secondary'} className="num">
+                  {times[n].arr && <Time t={times[n].arr!} />}
+                  {times[n].arr && times[n].dep && ' - '}
+                  {times[n].dep && <Time t={times[n].dep!} />}
                 </Typography.Text>
               </Flex>
             ))}
           </Flex>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            평소 운행 시간표 기준이며 이 앱의 역(KTX 정차역)만 보여줍니다. 실제 시각·시종착역과 다를 수 있습니다.
+            출발·도착역 시각은 코레일 조회 값이고, * 가 붙은 시각은 평소 운행 기록으로 계산한 근사값입니다.
+            이 앱의 역(KTX 정차역)만 보여주며 시종착역은 실제와 다를 수 있습니다.
           </Typography.Text>
         </Flex>
       )}
