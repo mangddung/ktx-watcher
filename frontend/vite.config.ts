@@ -16,7 +16,7 @@ export default defineConfig({
       '/api': { target, changeOrigin: false },
       '/auth': { target, changeOrigin: false },
     },
-    // Windows Docker Desktop bind mount 에서 HMR 이 동작하려면 필요
-    watch: { usePolling: true, interval: 300 },
+    // Windows Docker Desktop bind mount 는 파일 변경 알림이 오지 않아 폴링해야 HMR 이 된다(docker-compose.dev.yml 이 켠다)
+    watch: process.env.VITE_USE_POLLING ? { usePolling: true, interval: 300 } : undefined,
   },
 })
