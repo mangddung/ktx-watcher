@@ -46,6 +46,7 @@ export default function ChannelPicker({ value, onChange, channels }: {
         buttonStyle="solid"
         value={value.mode}
         onChange={(e) => onChange({ ...value, mode: e.target.value })}
+        aria-label="채널 지정 방식"
         options={[
           { value: 'auto', label: '자동 생성', disabled: !config.botReady },
           { value: 'manual', label: '직접 선택' },
@@ -65,6 +66,8 @@ export default function ChannelPicker({ value, onChange, channels }: {
           value={value.channelIds}
           onChange={(channelIds) => onChange({ ...value, channelIds })}
           options={options}
+          aria-label="알림 채널"
+          notFoundContent="쓸 수 있는 채널이 없습니다. 알림 채널 탭에서 웹훅을 추가하거나 봇·Telegram을 연결하세요."
         />
       )}
     </Flex>
@@ -74,9 +77,13 @@ export default function ChannelPicker({ value, onChange, channels }: {
 // 읽기 권한을 줄 서버 멤버 고르기. 감시 추가·재개와 상세 화면에서 같이 쓴다
 export function ViewerSelect({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   const [members, setMembers] = useState<Member[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.members().then(setMembers).catch(() => setMembers([]))
+    api.members().then(setMembers, (e) => {
+      setMembers([])
+      setError(e instanceof Error ? e.message : '멤버 목록을 불러오지 못했습니다')
+    })
   }, [])
 
   return (
@@ -87,7 +94,8 @@ export function ViewerSelect({ value, onChange }: { value: string[]; onChange: (
       value={value}
       onChange={onChange}
       loading={members === null}
-      notFoundContent={members?.length === 0 ? '멤버 목록이 없습니다 (봇의 SERVER MEMBERS INTENT 를 확인하세요)' : undefined}
+      aria-label="열람자"
+      notFoundContent={error ?? (members?.length === 0 ? '멤버 목록이 없습니다. 봇의 SERVER MEMBERS INTENT를 확인하세요.' : undefined)}
       options={(members ?? []).map((m) => ({ value: m.id, label: m.name, username: m.username, member: m }))}
       match={(o, q) => `${o.label} ${o.username}`.toLowerCase().includes(q.toLowerCase())}
       searchPlaceholder="이름이나 사용자명 검색"
@@ -105,14 +113,14 @@ export function ViewerSelect({ value, onChange }: { value: string[]; onChange: (
         </Flex>
       )}
       tagRender={({ value: id, closable, onClose }) => {
-        const m = members?.find((x) => x.id === id)
-        if (!m) return <span />
+        // 목록을 받기 전이거나 서버를 나간 멤버도 지울 수 있게 ID 로 보여준다
+        const m = members?.find((x) => x.id === id) ?? { id: String(id), name: `ID …${String(id).slice(-4)}`, username: '', avatar: null }
         return (
           <Tag
             closable={closable}
             onClose={onClose}
             onMouseDown={(e) => e.preventDefault()}
-            style={{ borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 6, paddingInlineStart: 3, marginInlineEnd: 4 }}
+            style={{ borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 6, paddingInlineStart: 3, marginInlineEnd: 4 }}
           >
             <MemberAvatar m={m} size={20} />
             {m.name}
@@ -125,7 +133,7 @@ export function ViewerSelect({ value, onChange }: { value: string[]; onChange: (
 
 function MemberAvatar({ m, size }: { m: Member; size: number }) {
   return (
-    <Avatar size={size} src={m.avatar ?? undefined} style={{ flex: 'none', fontSize: size * 0.45 }}>
+    <Avatar shape="square" size={size} src={m.avatar ?? undefined} alt={m.name} style={{ flex: 'none', fontSize: size * 0.45, borderRadius: size * 0.3 }}>
       {m.name.slice(0, 1)}
     </Avatar>
   )

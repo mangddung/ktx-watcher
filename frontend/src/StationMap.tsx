@@ -295,8 +295,13 @@ export function MapView({ stations, dep, arr, highlights = [], stops, only, focu
                 <g
                   key={s} data-station={s}
                   {...(onTap && { role: 'button', tabIndex: 0, 'aria-label': s, 'aria-disabled': off(s) })}
-                  style={{ cursor: cursor(s), outline: 'none', opacity: off(s) || rest(s) ? 0.3 : 1 }}
-                  onKeyDown={(e) => e.key === 'Enter' && tap(s)}
+                  className="station-dot"
+                  style={{ cursor: cursor(s), opacity: off(s) || rest(s) ? 0.3 : 1 }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    tap(s)
+                  }}
                 >
                   <title>{s}</title>
                   <circle cx={a} cy={b} r={12} fill="transparent" />
@@ -441,7 +446,8 @@ export default function StationMap({ stations, dep, arr, mobile, reachable, onPi
       </Typography.Text>
       <RouteMap
         stations={stations} dep={dep} arr={arr} off={off} focus={[]}
-        height={mobile ? '60vh' : 'min(70vh, 720px)'}
+        // 휴대폰에서도 아래 완료 버튼이 화면 안에 들어오게 남는 높이만 쓴다
+        height={mobile ? 'max(260px, calc(100dvh - 330px))' : 'min(70vh, 720px)'}
         onTap={(s) => {
           onPick(target, s)
           setTarget(target === 'dep' ? 'arr' : 'dep')

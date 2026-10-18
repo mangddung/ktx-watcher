@@ -12,6 +12,7 @@
     "@ant-design/icons": "6.3.4",
     "antd": "6.6.3",
     "dayjs": "1.11.23",
+    "pretendard": "1.3.9",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

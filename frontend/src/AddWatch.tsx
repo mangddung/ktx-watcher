@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  App, Button, Card, Checkbox, DatePicker, Empty, Flex, InputNumber, Radio, Table, Tag, TimePicker,
+  Alert, App, Button, Checkbox, DatePicker, Empty, Flex, InputNumber, Radio, Table, Tag, TimePicker,
   Typography, theme,
 } from 'antd'
-import { EnvironmentOutlined, LoadingOutlined, NodeIndexOutlined, SearchOutlined, SwapOutlined } from '@ant-design/icons'
+import { EnvironmentOutlined, LoadingOutlined, NodeIndexOutlined, SearchOutlined, StopOutlined, SwapOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import {
   api, groupOf, trainTimes, useConfig, type Basis, type Channel, type Config, type SeatState, type Train, type Watch,
@@ -12,6 +12,7 @@ import SearchSelect from './SearchSelect'
 import StationMap from './StationMap'
 import TrainRoute from './TrainRoute'
 import ChannelPicker, { emptyPick, type ChannelPick } from './ChannelPicker'
+import { Panel, fmtDay } from './ui'
 
 const SEAT_TAG: Record<SeatState, [string, string]> = {
   avail: ['success', '예약 가능'],
@@ -51,7 +52,7 @@ function saveForm(dep: string, arr: string, types: string[]) {
 
 // busy: 조회 중. 조회가 끝났는데 아직 wait 면(오류로 멈춤) 좌석을 모르는 채로 남는다
 const seatTag = (s: SeatState, busy: boolean) => (
-  <Tag color={SEAT_TAG[s][0]} variant="filled" style={{ borderRadius: 999, margin: 0 }}>
+  <Tag color={SEAT_TAG[s][0]} variant="filled" style={{ borderRadius: 6, margin: 0 }}>
     {s === 'wait' && !busy ? '미확인' : SEAT_TAG[s][1]}
   </Tag>
 )
@@ -105,10 +106,11 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
   const [end, setEnd] = useState<Dayjs>(() => dayjs().add(3, 'day').hour(23).minute(59).second(0).millisecond(0))
   const [basis, setBasis] = useState<Basis>('dep')
   const [types, setTypes] = useState<string[]>(saved.types)
-  const [seats, setSeats] = useState<string[]>(['일반실'])
+  const [seats, setSeats] = useState<string[]>(() => config.seatClasses.slice(0, 1))
   const [passengers, setPassengers] = useState(1)
   const [all, setAll] = useState<Train[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [pick, setPick] = useState<ChannelPick>(emptyPick)
@@ -148,7 +150,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
   const fresh = all !== null && searchedFor === query
   const watchable = trains.filter((t) => !tooLate(t)).length
   const blocked = !fresh ? '열차 조회를 먼저 하세요.'
-    : watchable === 0 ? (loading ? '열차를 조회하는 중입니다.' : '조건에 맞는 열차가 없어 감시할 수 없습니다.') : null
+    : watchable === 0 ? (loading ? '열차를 조회하는 중입니다.' : searchError ? '열차 조회에 실패했습니다. 다시 조회하세요.' : '조건에 맞는 열차가 없어 감시할 수 없습니다.') : null
 
   // 진행 중인 조회. 끊으면 서버도 다음 페이지를 요청하지 않는다
   const ctrl = useRef<AbortController | null>(null)
@@ -171,6 +173,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
     const c = new AbortController()
     ctrl.current = c
     setLoading(true)
+    setSearchError(null)
     setSelected([])
     setAll([])
     setSearchedFor(query)
@@ -188,7 +191,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
       setAll((prev) => (prev ?? []).filter((t) => confirmed.has(trainKey(t))))
       setSelected((prev) => prev.filter((k) => confirmed.has(k)))
     } catch (e) {
-      if (!c.signal.aborted) message.error(e instanceof Error ? e.message : '조회에 실패했습니다')
+      if (!c.signal.aborted) setSearchError(e instanceof Error ? e.message : '조회에 실패했습니다')
     } finally {
       if (ctrl.current === c) {
         ctrl.current = null
@@ -239,7 +242,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
         variant="borderless"
         suffixIcon={null}
         popupMatchSelectWidth={200}
-        notFoundContent="KTX 정차역만 선택할 수 있습니다"
+        notFoundContent="KTX 정차역만 고를 수 있습니다"
         style={{ width: '100%', height: 44 }}
       />
     </div>
@@ -248,94 +251,116 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
   // 카드를 누르면 선택이 바뀌므로 이 버튼은 누름을 카드로 넘기지 않는다
   const routeButton = (t: Train) => (
     <Button
-      type="text" size="small" icon={<NodeIndexOutlined />} aria-label={`${t.no} 운행 정보`}
+      type="text" size="middle" icon={<NodeIndexOutlined />} aria-label={`노선: ${t.no} 운행 정보`}
       onClick={(e) => {
         e.stopPropagation()
         setRouteOf(t)
       }}
+      onKeyDown={(e) => e.stopPropagation()}
       style={{ color: token.colorTextSecondary }}
     >
       노선
     </Button>
   )
 
-  const section = (title: string, children: ReactNode, extra?: ReactNode) => (
-    <Card title={title} extra={extra} styles={{ header: { borderBottom: 0 }, body: { paddingTop: 0 } }}>
+  // 단계 번호를 붙인 구역
+  const step = (n: number, title: string, children: ReactNode, extra?: ReactNode) => (
+    <Panel
+      title={
+        <Flex align="center" gap={10}>
+          <span aria-hidden className="num" style={{
+            width: 24, height: 24, borderRadius: 8, display: 'inline-grid', placeItems: 'center', fontSize: 13, fontWeight: 700,
+            background: token.colorPrimaryBg, color: token.colorPrimaryText,
+          }}>{n}</span>
+          {title}
+        </Flex>
+      }
+      extra={extra}
+    >
       {children}
-    </Card>
+    </Panel>
   )
+  const toggle = (k: string, on: boolean) => setSelected(on ? selected.filter((n) => n !== k) : [...selected, k])
+  const summary = dep && arr && valid
+    ? `${dep} → ${arr} · ${start.format('M/D(dd) HH:mm')} ~ ${end.format(start.isSame(end, 'day') ? 'HH:mm' : 'M/D(dd) HH:mm')} ${basis === 'dep' ? '출발' : '도착'} · ${passengers}명`
+    : '출발역·도착역과 구간을 고르세요'
 
   return (
-    <Flex vertical gap={16} style={{ maxWidth: 760 }}>
-      <Card styles={{ body: { padding: 20 } }}>
-        <Flex align="center" gap={8}>
-          {stationBox('출발', dep, pickDep)}
-          <Button
-            shape="circle" size="large" icon={<SwapOutlined />} aria-label="출발역과 도착역 바꾸기"
-            style={{ flex: 'none', background: token.colorPrimaryBg, color: token.colorPrimary, border: 0 }}
-            onClick={swap}
-          />
-          <div style={{ textAlign: 'right', flex: 1, minWidth: 0 }}>{stationBox('도착', arr, setArr, ARR_OPTIONS)}</div>
-        </Flex>
-        <Button type="text" size="small" icon={<EnvironmentOutlined />} onClick={() => setMapOpen(true)} style={{ marginTop: 4, color: token.colorTextSecondary }}>
-          지도에서 선택
-        </Button>
-        {mapOpen && (
-          <StationMap
-            stations={config.stations} dep={dep} arr={arr} mobile={mobile} reachable={reachable}
-            onPick={(which, s) => (which === 'dep' ? pickDep : setArr)(s)} onSwap={swap} onClose={() => setMapOpen(false)}
-          />
-        )}
-        <div style={{ height: 1, background: token.colorBorderSecondary, margin: '14px 0' }} />
-        <Flex vertical gap={10}>
-          {([
-            ['시작', start, setStartPart, (d: Dayjs) => d.isBefore(dayjs(), 'day') || d.isAfter(dayjs().add(30, 'day'))],
-            ['끝', end, setEnd, (d: Dayjs) => d.isBefore(start, 'day') || d.isAfter(lastDay, 'day')],
-          ] as const).map(([label, value, set, disabledDate]) => (
-            <Flex key={label} align="center" gap={8}>
-              <Typography.Text type="secondary" style={{ width: 28, flex: 'none', fontSize: 13 }}>{label}</Typography.Text>
-              <DatePicker
-                value={value}
-                onChange={(d) => d && set(value.year(d.year()).month(d.month()).date(d.date()))}
-                format="M/D (dd)"
-                allowClear={false}
-                inputReadOnly
-                disabledDate={disabledDate}
-                style={{ flex: 1, minWidth: 0 }}
-                aria-label={`${label} 날짜`}
+    <Flex vertical gap={16}>
+      {step(1, '구간', (
+        <>
+          <Flex align="center" gap={8}>
+            {stationBox('출발', dep, pickDep)}
+            <Button
+              shape="circle" icon={<SwapOutlined />} aria-label="출발역과 도착역 바꾸기"
+              style={{ flex: 'none', background: token.colorPrimaryBg, color: token.colorPrimaryText, border: 0 }}
+              onClick={swap}
+            />
+            <div style={{ textAlign: 'right', flex: 1, minWidth: 0 }}>{stationBox('도착', arr, setArr, ARR_OPTIONS)}</div>
+          </Flex>
+          <Button type="text" size="middle" icon={<EnvironmentOutlined />} onClick={() => setMapOpen(true)}
+            style={{ marginTop: 4, marginLeft: -8, color: token.colorPrimaryText }}>
+            지도에서 고르기
+          </Button>
+          {mapOpen && (
+            <StationMap
+              stations={config.stations} dep={dep} arr={arr} mobile={mobile} reachable={reachable}
+              onPick={(which, s) => (which === 'dep' ? pickDep : setArr)(s)} onSwap={swap} onClose={() => setMapOpen(false)}
+            />
+          )}
+          <div style={{ height: 1, background: token.colorBorderSecondary, margin: '14px 0' }} />
+          <Flex vertical gap={10}>
+            {([
+              // 코레일 승차권은 한 달 뒤까지 예매할 수 있다
+              ['시작', start, setStartPart, (d: Dayjs) => d.isBefore(dayjs(), 'day') || d.isAfter(dayjs().add(30, 'day'))],
+              ['끝', end, setEnd, (d: Dayjs) => d.isBefore(start, 'day') || d.isAfter(lastDay, 'day')],
+            ] as const).map(([label, value, set, disabledDate]) => (
+              <Flex key={label} align="center" gap={8}>
+                <Typography.Text type="secondary" style={{ width: 28, flex: 'none', fontSize: 13 }}>{label}</Typography.Text>
+                <DatePicker
+                  value={value}
+                  onChange={(d) => d && set(value.year(d.year()).month(d.month()).date(d.date()))}
+                  format="M/D(dd)"
+                  allowClear={false}
+                  inputReadOnly
+                  disabledDate={disabledDate}
+                  style={{ flex: 1, minWidth: 0 }}
+                  aria-label={`${label} 날짜`}
+                />
+                <TimePicker
+                  value={value}
+                  onChange={(t) => t && set(value.hour(t.hour()).minute(t.minute()))}
+                  // 직접 입력: "07:30" 또는 숫자만 "0730"
+                  format={['HH:mm', 'HHmm']}
+                  needConfirm={false}
+                  allowClear={false}
+                  style={{ flex: '0 0 108px' }}
+                  aria-label={`${label} 시각`}
+                />
+              </Flex>
+            ))}
+            <Typography.Text type={valid ? 'secondary' : 'danger'} className="num" style={{ fontSize: 13 }}>
+              {valid
+                ? `연속 ${hours >= 24 ? `${Math.floor(hours / 24)}일 ${hours % 24}시간` : `${hours}시간`} · 최대 ${MAX_WATCH_DAYS}일`
+                : '끝 일시가 시작 일시보다 늦어야 합니다'}
+            </Typography.Text>
+            <Flex gap={12} wrap align="center">
+              <Radio.Group
+                optionType="button" buttonStyle="solid" value={basis} onChange={(e) => setBasis(e.target.value)}
+                options={[{ value: 'dep', label: '출발 시각 기준' }, { value: 'arr', label: '도착 시각 기준' }]}
+                aria-label="시각 기준"
               />
-              <TimePicker
-                value={value}
-                onChange={(t) => t && set(value.hour(t.hour()).minute(t.minute()))}
-                // 직접 입력: "07:30" 또는 숫자만 "0730"
-                format={['HH:mm', 'HHmm']}
-                needConfirm={false}
-                allowClear={false}
-                style={{ flex: '0 0 104px' }}
-                aria-label={`${label} 시각`}
+              <InputNumber
+                min={1} max={9} value={passengers} onChange={(v) => setPassengers(v ?? 1)}
+                suffix="명" style={{ flex: '0 0 96px' }} aria-label="인원수"
               />
             </Flex>
-          ))}
-          <Typography.Text type={valid ? 'secondary' : 'danger'} style={{ fontSize: 13 }}>
-            {valid
-              ? `${start.format('M/D(dd) HH:mm')} ~ ${end.format(start.isSame(end, 'day') ? 'HH:mm' : 'M/D(dd) HH:mm')} 연속 ${hours >= 24 ? `${Math.floor(hours / 24)}일 ${hours % 24}시간` : `${hours}시간`}`
-              : '끝 일시가 시작 일시보다 늦어야 합니다'}
-          </Typography.Text>
-          <Flex gap={12} wrap align="center">
-            <Radio.Group
-              optionType="button" buttonStyle="solid" value={basis} onChange={(e) => setBasis(e.target.value)}
-              options={[{ value: 'dep', label: '출발 시각 기준' }, { value: 'arr', label: '도착 시각 기준' }]}
-            />
-            <InputNumber
-              min={1} max={9} value={passengers} onChange={(v) => setPassengers(v ?? 1)}
-              suffix="명" style={{ flex: '0 0 96px' }} aria-label="인원수"
-            />
           </Flex>
-        </Flex>
-      </Card>
+        </>
+      ))}
 
-      {section('열차 조건', (
-        <Flex vertical gap={14}>
+      {step(2, '열차 조건', (
+        <Flex vertical gap={16}>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>열차 종류</Typography.Text>
             <Flex vertical gap={10} style={{ marginTop: 8 }}>
@@ -369,18 +394,28 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
               <Checkbox.Group value={seats} onChange={setSeats} options={config.seatClasses} />
             </div>
           </div>
-          <Button type="primary" size="large" block shape="round" icon={<SearchOutlined />} loading={loading} onClick={search} style={{ height: 50 }}>
-            열차 조회
-          </Button>
+          {loading ? (
+            <Button block icon={<StopOutlined />} onClick={stop} style={{ height: 50 }}>
+              조회 중… 그만 조회
+            </Button>
+          ) : (
+            <Button type="primary" block icon={<SearchOutlined />} onClick={search} style={{ height: 50 }}>
+              열차 조회
+            </Button>
+          )}
         </Flex>
       ))}
 
-      {all && section(
+      {all && step(
+        3,
         '열차 선택',
-        <Flex vertical gap={10}>
+        <Flex vertical gap={12}>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            선택하지 않으면 조건에 맞는 열차 전체를 감시합니다. 출발 {CUTOFF_MIN}분 전이 지난 열차는 감시하지 않습니다.
+            고르지 않으면 조건에 맞는 열차 전체를 감시합니다. 출발 {CUTOFF_MIN}분 전이 지난 열차는 감시하지 않습니다.
           </Typography.Text>
+          {searchError && (
+            <Alert type="error" showIcon title={searchError} action={<Button size="small" onClick={search}>다시 조회</Button>} />
+          )}
           <Flex gap={8} wrap>
             {config.trainGroups.map((g) => {
               const keys = trains.filter((t) => inGroup(t, g.name) && !tooLate(t)).map(trainKey)
@@ -389,9 +424,9 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
               return (
                 <Button
                   key={g.name}
-                  shape="round"
                   size="middle"
                   type={all ? 'primary' : 'default'}
+                  aria-pressed={all}
                   onClick={() => setSelected(all ? selected.filter((k) => !keys.includes(k)) : [...new Set([...selected, ...keys])])}
                 >
                   {g.name} 전체 {keys.length}편
@@ -400,59 +435,79 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
             })}
           </Flex>
           {mobile ? (
-            trains.length === 0 ? <Empty description={loading ? '열차를 조회하는 중입니다' : '조건에 맞는 열차가 없습니다'} /> : trains.map((t) => {
-                const k = trainKey(t)
-                const on = selected.includes(k)
-                const off = tooLate(t)
-                return (
-                  <div
-                    key={k}
-                    onClick={() => !off && setSelected(on ? selected.filter((n) => n !== k) : [...selected, k])}
-                    style={{
-                      padding: 14, marginBottom: 8, borderRadius: 16, cursor: off ? 'not-allowed' : 'pointer',
-                      opacity: off ? 0.45 : 1,
-                      border: `1.5px solid ${on ? token.colorPrimary : token.colorBorderSecondary}`,
-                      background: on ? token.colorPrimaryBg : token.colorBgContainer,
-                    }}
-                  >
-                    <Flex justify="space-between" align="center">
-                      <Flex gap={10} align="center">
-                        <Checkbox checked={on} disabled={off} />
-                        <div>
-                          <div style={{ fontWeight: 700 }}>
-                            {days > 1 && <span style={{ color: token.colorPrimary }}>{dayjs(t.date).format('M/D(dd)')} </span>}
-                            {typeName(t)} {t.no}
+            trains.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={loading ? '열차를 조회하는 중입니다' : searchError ? '조회에 실패했습니다' : '조건에 맞는 열차가 없습니다'} />
+            ) : (
+              <Flex vertical gap={8}>
+                {trains.map((t) => {
+                  const k = trainKey(t)
+                  const on = selected.includes(k)
+                  const off = tooLate(t)
+                  return (
+                    <div
+                      key={k}
+                      className="pick-card"
+                      role="checkbox"
+                      aria-checked={on}
+                      aria-disabled={off}
+                      aria-label={`${days > 1 ? `${fmtDay(t.date)} ` : ''}${t.no} ${t.dep} 출발 ${t.arr} 도착`}
+                      tabIndex={off ? -1 : 0}
+                      onClick={() => !off && toggle(k, on)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget || (e.key !== ' ' && e.key !== 'Enter') || off) return
+                        e.preventDefault()
+                        toggle(k, on)
+                      }}
+                      style={{
+                        cursor: off ? 'not-allowed' : 'pointer', opacity: off ? 0.45 : 1,
+                        border: `1.5px solid ${on ? token.colorPrimary : token.colorBorderSecondary}`,
+                        background: on ? token.colorPrimaryBg : token.colorBgContainer,
+                      }}
+                    >
+                      <Flex justify="space-between" align="center" gap={8}>
+                        <Flex gap={12} align="center" style={{ minWidth: 0 }}>
+                          <Checkbox checked={on} disabled={off} tabIndex={-1} aria-hidden style={{ pointerEvents: 'none' }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 650, fontSize: 13.5 }}>
+                              {days > 1 && <span style={{ color: token.colorPrimary }}>{fmtDay(t.date)} </span>}
+                              {typeName(t)} {t.no}
+                            </div>
+                            <div className="num" style={{ fontSize: 19, fontWeight: 750, letterSpacing: '-0.02em' }}>
+                              {t.dep} <span style={{ color: token.colorTextTertiary, fontWeight: 500 }}>→</span> {t.arr}
+                            </div>
                           </div>
-                          <div style={{ fontSize: 18, fontWeight: 800 }}>{t.dep} <span style={{ color: token.colorTextTertiary }}>-</span> {t.arr}</div>
-                        </div>
+                        </Flex>
+                        <Flex vertical gap={4} align="end" style={{ fontSize: 12, flex: 'none' }}>
+                          <span>일반 {seatTag(t.general, loading)}</span>
+                          <span>특실 {seatTag(t.special, loading)}</span>
+                        </Flex>
                       </Flex>
-                      <Flex vertical gap={4} align="end" style={{ fontSize: 12 }}>
-                        <span>일반 {seatTag(t.general, loading)}</span>
-                        <span>특실 {seatTag(t.special, loading)}</span>
-                        {routeButton(t)}
-                      </Flex>
-                    </Flex>
-                  </div>
-                )
-            })
+                      <Flex justify="end" style={{ marginTop: 4, marginBottom: -6 }}>{routeButton(t)}</Flex>
+                    </div>
+                  )
+                })}
+              </Flex>
+            )
           ) : (
             <Table
               rowKey={trainKey}
               size="middle"
               pagination={false}
               dataSource={trains}
-              locale={{ emptyText: loading ? '열차를 조회하는 중입니다' : '조건에 맞는 열차가 없습니다' }}
+              scroll={{ x: 'max-content' }}
+              locale={{ emptyText: loading ? '열차를 조회하는 중입니다' : searchError ? '조회에 실패했습니다' : '조건에 맞는 열차가 없습니다' }}
               rowSelection={{
                 selectedRowKeys: selected,
                 onChange: (keys) => setSelected(keys as string[]),
-                getCheckboxProps: (t) => ({ disabled: tooLate(t) }),
+                getCheckboxProps: (t) => ({ disabled: tooLate(t), 'aria-label': `${t.no} 선택` }),
               }}
               columns={[
-                ...(days > 1 ? [{ title: '날짜', render: (_: unknown, t: Train) => dayjs(t.date).format('M/D(dd)') }] : []),
+                ...(days > 1 ? [{ title: '날짜', render: (_: unknown, t: Train) => fmtDay(t.date) }] : []),
                 { title: '열차', render: (_, t) => <b>{typeName(t)} {t.no}</b> },
-                { title: '출발', dataIndex: 'dep' },
-                { title: '도착', dataIndex: 'arr' },
-                { title: '소요', render: (_, t) => `${Math.floor(t.minutes / 60)}시간 ${t.minutes % 60}분` },
+                { title: '출발', dataIndex: 'dep', className: 'num' },
+                { title: '도착', dataIndex: 'arr', className: 'num' },
+                { title: '소요', className: 'num', render: (_, t) => `${Math.floor(t.minutes / 60)}시간 ${t.minutes % 60}분` },
                 { title: '일반실', render: (_, t) => seatTag(t.general, loading) },
                 { title: '특실', render: (_, t) => seatTag(t.special, loading) },
                 { title: '', width: 88, render: (_, t) => routeButton(t) },
@@ -460,7 +515,7 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
             />
           )}
         </Flex>,
-        <Tag variant="filled" color="blue" style={{ borderRadius: 999 }}>
+        <Tag variant="filled" color="blue" className="num" style={{ borderRadius: 6, margin: 0 }}>
           {loading && <LoadingOutlined style={{ marginRight: 6 }} />}
           {selected.length ? `${selected.length}편 선택` : `전체 ${trains.length}편`}
         </Tag>,
@@ -474,19 +529,25 @@ export default function AddWatch({ watches, channels, mobile, onCreated }: {
         />
       )}
 
-      {section('알림 채널', <ChannelPicker value={pick} onChange={setPick} channels={channels} />)}
+      {step(all ? 4 : 3, '알림 채널', <ChannelPicker value={pick} onChange={setPick} channels={channels} />)}
 
-      {blocked && (
-        <Typography.Text type={fresh && !loading ? 'danger' : 'secondary'} style={{ textAlign: 'center' }}>
-          {all && !fresh ? '조건이 바뀌었습니다. 열차를 다시 조회하세요.' : blocked}
-        </Typography.Text>
-      )}
-      <Button
-        type="primary" size="large" block shape="round" onClick={submit} loading={saving} disabled={!!blocked}
-        style={{ height: 54, fontSize: 16 }}
-      >
-        감시 추가
-      </Button>
+      <Panel>
+        <Flex vertical gap={12}>
+          <div>
+            <div style={{ fontWeight: 650 }}>{summary}</div>
+            <Typography.Text type={blocked && fresh && !loading ? 'danger' : 'secondary'} style={{ fontSize: 13 }}>
+              {all && !fresh ? '조건이 바뀌었습니다. 열차를 다시 조회하세요.'
+                : blocked ?? (selected.length ? `고른 열차 ${selected.length}편을 감시합니다.` : `조건에 맞는 열차 ${watchable}편을 감시합니다.`)}
+            </Typography.Text>
+          </div>
+          <Button
+            type="primary" block onClick={submit} loading={saving} disabled={!!blocked}
+            style={{ height: 54, fontSize: 16 }}
+          >
+            감시 추가
+          </Button>
+        </Flex>
+      </Panel>
     </Flex>
   )
 }
