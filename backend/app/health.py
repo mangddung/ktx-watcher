@@ -87,7 +87,7 @@ def compute() -> dict:
     with SessionLocal() as db:
         names = dict(db.execute(select(Node.id, Node.name).where(Node.revoked_at.is_(None))).all())
     remote = {i: sch.workers.get(f"node:{i}") for i in names}
-    if not starting and (off := [names[i] for i, w in remote.items() if not (w and w.online(now))]):
+    if not starting and (off := [names[i] for i, w in remote.items() if not (w and (w.online(now) or w.stopped))]):
         mismatch = [names[i] for i, w in remote.items() if w and w.status(now) == "version"]
         warning.append({"label": "노드", "value": f"{', '.join(off)} 오프라인" + (" (버전 불일치)" if mismatch else "")})
     if same := [ip for ip, n in Counter(w.ip for w in on if w.remote).items() if n > 1]:

@@ -40,11 +40,13 @@ def hash_token(token: str) -> str:
 
 
 class NodeError(Exception):
-    """노드가 보고한 조회 실패, 응답 시간 초과, 폐기."""
+    """노드가 보고한 조회 실패, 응답 시간 초과, 폐기·종료.
+    gone 이면 노드가 빠진 것이라 조회 실패로 세지 않는다(다음 사이클에 다른 워커가 맡는다)."""
 
-    def __init__(self, message: str, block: bool = False) -> None:
+    def __init__(self, message: str, block: bool = False, gone: bool = False) -> None:
         super().__init__(message)
         self.block = block
+        self.gone = gone
 
 
 class Worker:
@@ -76,7 +78,7 @@ class Worker:
         return self.cooldown_until is not None and now < self.cooldown_until
 
     def status(self, now: datetime) -> str:
-        """online | offline | version(버전 불일치) | cooldown | blocked"""
+        """online | offline | stopped(노드가 종료를 알림) | version(버전 불일치) | cooldown | blocked"""
         if not self.online(now):
             return "offline"
         if self.cooling(now):
@@ -98,6 +100,7 @@ class RemoteWorker(Worker):
         self.name = name
         self.version: str | None = None
         self.last_poll: datetime | None = None
+        self.stopped = False  # 노드가 종료를 알렸다(/bye). 오프라인 경고를 내지 않는다. 다시 poll 하면 풀린다
         self.saved_at: datetime | None = None
         self.job: dict | None = None
         self.result: asyncio.Future | None = None
@@ -109,6 +112,8 @@ class RemoteWorker(Worker):
     def status(self, now: datetime) -> str:
         if self.version and self.version != VERSION:
             return "version"
+        if self.stopped:
+            return "stopped"
         return super().status(now)
 
     async def scan(self, g) -> list[TrainInfo]:
@@ -186,7 +191,7 @@ def revoke(node_id: int) -> bool:
         db.commit()
     wk = state.scheduler.workers.pop(f"node:{node_id}", None)
     if wk and wk.result and not wk.result.done():
-        wk.result.set_exception(NodeError("노드를 폐기했습니다"))
+        wk.result.set_exception(NodeError("노드를 폐기했습니다", gone=True))
     log.info("노드 #%d %s 폐기", node_id, n.name)
     return True
 
@@ -250,12 +255,23 @@ async def poll(body: PollIn, request: Request, node: Node = Depends(node_auth)):
             log.warning("노드 %s pykorail %s, 중앙 %s: 잡을 주지 않습니다", wk.name, body.version, VERSION)
         wk.version = body.version
         raise HTTPException(409, f"pykorail 버전이 중앙({VERSION})과 다릅니다({body.version}). 노드를 다시 빌드하세요")
-    wk.version = body.version
+    wk.version, wk.stopped = body.version, False
     try:
         await asyncio.wait_for(wk.wake.wait(), POLL_WAIT)
     except TimeoutError:
         return Response(status_code=204)
     return wk.job or Response(status_code=204)
+
+
+@router.post("/bye")
+async def bye(request: Request, node: Node = Depends(node_auth)):
+    """노드가 종료하면서 보낸다. 바로 빼서 잡을 더 맡기지 않고, 맡겨 둔 잡은 JOB_TIMEOUT 을 기다리지 않고 거둔다."""
+    wk = seen(node, request)
+    wk.last_poll, wk.stopped = None, True
+    if wk.result and not wk.result.done():
+        wk.result.set_exception(NodeError("노드가 종료했습니다", gone=True))
+    log.info("노드 %s 종료", wk.name)
+    return {"ok": True}
 
 
 class TrainIn(BaseModel):

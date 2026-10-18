@@ -140,8 +140,8 @@ def test_token_is_shown_once_and_revoked_token_is_401(admin):
     assert [n["local"] for n in admin.get("/api/nodes").json()] == [True]
 
 
-def serve(trains) -> tuple[dict, dict]:
-    """중앙은 노드만 쓰고, 노드 하나가 poll 로 잡을 받아 trains 를 결과로 보낸다. (결과 응답, 잡)."""
+def serve(trains, bye: bool = False) -> tuple[dict, dict]:
+    """중앙은 노드만 쓰고, 노드 하나가 poll 로 잡을 받아 trains 를 결과로 보낸다(bye 면 결과 대신 종료를 알린다). (응답, 잡)."""
     sch = state.scheduler = Scheduler(clock=lambda: NOW, local=False)
     token = nodes.issue("집")["token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -150,6 +150,8 @@ def serve(trains) -> tuple[dict, dict]:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as http:
             async def node():
                 job = (await http.post("/api/node/poll", json={"version": nodes.VERSION}, headers=headers)).json()
+                if bye:
+                    return (await http.post("/api/node/bye", headers=headers)).json(), job
                 body = {"id": job["id"], "trains": [{**dataclasses.asdict(t), "dep_at": t.dep_at.isoformat(),
                                                      "arr_at": t.arr_at.isoformat()} for t in trains]}
                 return (await http.post("/api/node/result", json=body, headers=headers)).json(), job
@@ -157,7 +159,7 @@ def serve(trains) -> tuple[dict, dict]:
             task = asyncio.create_task(node())
             while not sch.workers:  # 첫 poll 이 워커를 등록할 때까지
                 await asyncio.sleep(0.01)
-            await sch.cycle()
+            await asyncio.wait_for(sch.cycle(), 5)  # 노드가 종료를 알리면 JOB_TIMEOUT 을 기다리지 않는다
             return await task
 
     return asyncio.run(main())
@@ -196,3 +198,49 @@ def test_node_ip_comes_from_cloudflare_header(admin):
         admin.post("/api/node/poll", json={"version": "0.0.1"},  # 버전이 달라 기다리지 않고 409
                    headers={"Authorization": f"Bearer {node['token']}", "CF-Connecting-IP": header})
         assert state.scheduler.workers[f"node:{node['id']}"].ip == ip
+
+
+def test_node_that_says_bye_mid_job_is_dropped_without_counting_failure(env):
+    wid = add_watch("2026-09-28 07:00", "2026-09-28 12:00")
+    res, _ = serve([], bye=True)
+    wk = next(iter(state.scheduler.workers.values()))
+    assert res == {"ok": True} and wk.status(NOW) == "stopped" and not state.scheduler.ready(NOW)
+    assert get(wid).error_count == 0 and not wk.history and wk.fails == 0  # 의도한 종료는 조회 실패가 아니다
+    assert not any(r["label"] == "노드" for r in compute()["reasons"])  # 오프라인 경고도 내지 않는다
+
+
+def test_node_client_says_bye_when_stopped(monkeypatch):
+    """docker stop·Ctrl+C 로 취소되면 중앙에 /bye 를 보낸다."""
+    from aiohttp import web
+
+    from app import node
+
+    monkeypatch.setattr(node, "setup_logging", lambda *a: None)  # 테스트 로그 설정은 건드리지 않는다
+    hits = []
+
+    async def poll(request):
+        await asyncio.sleep(1)  # 잡 없이 붙잡아 둔다
+        return web.Response(status=204)
+
+    async def bye(request):
+        hits.append(request.headers["Authorization"])
+        return web.json_response({"ok": True})
+
+    async def main():
+        srv = web.Application()
+        srv.add_routes([web.post("/api/node/poll", poll), web.post("/api/node/bye", bye)])
+        runner = web.AppRunner(srv)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        monkeypatch.setenv("CENTRAL_URL", f"http://127.0.0.1:{port}")
+        monkeypatch.setenv("NODE_TOKEN", "ktxn_test")
+        task = asyncio.create_task(node.main())
+        await asyncio.sleep(0.3)
+        task.cancel()
+        await task
+        await runner.cleanup()
+
+    asyncio.run(main())
+    assert hits == ["Bearer ktxn_test"]

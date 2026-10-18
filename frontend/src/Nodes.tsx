@@ -7,6 +7,7 @@ import { api, type NodeInfo, type NodeStatus } from './api'
 const STATUS: Record<NodeStatus, { label: string; color: string }> = {
   online: { label: '온라인', color: 'success' },
   offline: { label: '오프라인', color: 'default' },
+  stopped: { label: '중지됨', color: 'default' }, // 노드가 종료를 알렸다. 경고하지 않는다
   cooldown: { label: '쿨다운', color: 'warning' },
   blocked: { label: '차단 의심', color: 'error' },
   version: { label: '버전 불일치', color: 'error' },

@@ -5,9 +5,11 @@
 """
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import os
+import signal
 import sys
 from datetime import date, datetime
 
@@ -50,32 +52,52 @@ async def main() -> None:
     if cf_id and cf_secret:  # Cloudflare Access 서비스 토큰
         headers |= {"CF-Access-Client-Id": cf_id, "CF-Access-Client-Secret": cf_secret}
 
-    gate = Gate((1, 2))  # 간격은 잡마다 중앙이 정해 보낸다
-    retry = RETRY_MIN
+    # docker stop(SIGTERM)도 Ctrl+C 처럼 이 작업을 취소해서, 끝내기 전에 중앙에 종료를 알린다
+    with contextlib.suppress(NotImplementedError):  # Windows 에는 add_signal_handler 가 없다(Ctrl+C 는 그대로 취소된다)
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
     log.info("노드 시작: %s (pykorail %s)", url, VERSION)
     async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=POLL_WAIT + 20)) as http:
-        while True:
-            try:
-                async with http.post(f"{url}/api/node/poll", json={"version": VERSION}, allow_redirects=False) as r:
-                    if r.status == 204:
-                        retry = RETRY_MIN
-                        continue
-                    if r.status != 200 or r.content_type != "application/json":
-                        # 401·409 는 중앙의 안내, 302·403(HTML)은 Cloudflare Access 가 막은 것
-                        log.error("중앙이 거절했습니다 HTTP %s: %s", r.status, (await r.text())[:200])
-                        await asyncio.sleep(REJECTED_WAIT)
-                        continue
-                    job = await r.json()
-                retry = RETRY_MIN
-                body = await asyncio.to_thread(run_job, gate, job)
-                async with http.post(f"{url}/api/node/result", json=body, allow_redirects=False) as r:
-                    if r.status != 200:
-                        log.warning("결과를 보내지 못했습니다 HTTP %s", r.status)
-            except (aiohttp.ClientError, TimeoutError) as e:
-                log.warning("중앙에 연결하지 못했습니다: %s: %s. %d초 뒤 다시 시도", type(e).__name__, e, retry)
-                await asyncio.sleep(retry)
-                retry = min(retry * 2, RETRY_MAX)
+        try:
+            await serve(http, url)
+        except asyncio.CancelledError:
+            await bye(http, url)
+
+
+async def bye(http: aiohttp.ClientSession, url: str) -> None:
+    """중앙이 이 노드를 바로 빼게 한다. 안 보내면 중앙은 오프라인 판정(90초)이나 잡 시간 초과(120초)까지 기다린다."""
+    try:
+        async with http.post(f"{url}/api/node/bye", allow_redirects=False, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            log.info("중앙에 종료를 알렸습니다 (HTTP %s)", r.status)
+    except (aiohttp.ClientError, TimeoutError) as e:
+        log.warning("중앙에 종료를 알리지 못했습니다: %s: %s", type(e).__name__, e)
+
+
+async def serve(http: aiohttp.ClientSession, url: str) -> None:
+    gate = Gate((1, 2))  # 간격은 잡마다 중앙이 정해 보낸다
+    retry = RETRY_MIN
+    while True:
+        try:
+            async with http.post(f"{url}/api/node/poll", json={"version": VERSION}, allow_redirects=False) as r:
+                if r.status == 204:
+                    retry = RETRY_MIN
+                    continue
+                if r.status != 200 or r.content_type != "application/json":
+                    # 401·409 는 중앙의 안내, 302·403(HTML)은 Cloudflare Access 가 막은 것
+                    log.error("중앙이 거절했습니다 HTTP %s: %s", r.status, (await r.text())[:200])
+                    await asyncio.sleep(REJECTED_WAIT)
+                    continue
+                job = await r.json()
+            retry = RETRY_MIN
+            body = await asyncio.to_thread(run_job, gate, job)
+            async with http.post(f"{url}/api/node/result", json=body, allow_redirects=False) as r:
+                if r.status != 200:
+                    log.warning("결과를 보내지 못했습니다 HTTP %s", r.status)
+        except (aiohttp.ClientError, TimeoutError) as e:
+            log.warning("중앙에 연결하지 못했습니다: %s: %s. %d초 뒤 다시 시도", type(e).__name__, e, retry)
+            await asyncio.sleep(retry)
+            retry = min(retry * 2, RETRY_MAX)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(main())

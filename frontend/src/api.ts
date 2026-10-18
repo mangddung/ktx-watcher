@@ -96,7 +96,7 @@ export interface Health {
   failRate1h: number
 }
 
-export type NodeStatus = 'online' | 'offline' | 'cooldown' | 'blocked' | 'version'
+export type NodeStatus = 'online' | 'offline' | 'stopped' | 'cooldown' | 'blocked' | 'version'
 
 // 조회 워커. local 이면 중앙(이 서버)이고 id·prefix 가 없다
 export interface NodeInfo {

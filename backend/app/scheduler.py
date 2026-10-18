@@ -209,6 +209,9 @@ class Scheduler:
                 try:
                     results[key] = await wk.scan(g)
                 except Exception as e:
+                    if getattr(e, "gone", False):  # 노드가 종료·폐기됐다. 실패로 세지 않고 다음 사이클에 다른 워커가 맡는다
+                        log.info("%s%s, 남은 조회는 다음 사이클에 다른 워커가 맡습니다", tag(wk), e)
+                        return
                     self.record(wk, False, scanner.is_block_error(e) or getattr(e, "block", False))
                     errors[wk.key] = f"{type(e).__name__}: {e}"[:300]
                     log.error("%s%s→%s %s 조회 실패: %s (연속 %d/%d)", tag(wk), g.dep, g.arr, f"{g.day:%m/%d}",
