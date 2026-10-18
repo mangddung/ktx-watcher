@@ -1,4 +1,4 @@
-# prod: 코드는 이미지에 굽고 볼륨은 데이터만. 외부는 Cloudflare Tunnel 로, 이 PC 에서는 http://127.0.0.1:12972 로 들어온다.
+# prod: 코드는 이미지에 굽고 볼륨은 데이터만. 외부는 Cloudflare Tunnel 로, 이 PC 에서는 http://127.0.0.1:14372 로 들어온다.
 # 터널 Public Hostname(PUBLIC_BASE_URL 도메인)의 Service 는 http://frontend:80 (dev 도 같다)
 # dev 와 같은 compose 프로젝트(폴더 이름)라서, 한쪽을 up 하면 다른 쪽 컨테이너가 교체된다(동시에 뜨지 않는다).
 services:
@@ -21,7 +21,7 @@ services:
     image: ktx-watch-frontend:0.2.0
     depends_on: [backend]
     ports:
-      - "127.0.0.1:12972:80"  # 이 PC 에서만 접속(터널 없이 쓸 때)
+      - "127.0.0.1:14372:80"  # 이 PC 에서만 접속(터널 없이 쓸 때)
     restart: always
     logging:
       driver: json-file

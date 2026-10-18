@@ -8,7 +8,7 @@ os.environ.update({
     "DISCORD_CLIENT_ID": "test-client",
     "DISCORD_CLIENT_SECRET": "test-client-secret-value",
     "SESSION_SECRET": "x" * 48,
-    "PUBLIC_BASE_URL": "http://localhost:12971",
+    "PUBLIC_BASE_URL": "http://localhost:14371",
     "DATABASE_URL": "sqlite://",
     "DISCORD_BOT_TOKEN": "",
     "TELEGRAM_BOT_TOKEN": "",

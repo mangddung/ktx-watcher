@@ -54,7 +54,7 @@ class Settings:
     guild_id: int | None
     admin_ids: tuple[int, ...]
     admin_errors: list[str] = field(default_factory=list)
-    public_base_url: str = "http://localhost:12971"
+    public_base_url: str = "http://localhost:14371"
     session_secret: str = ""
     telegram_token: str = ""
     data_go_kr_key: str = ""  # 선택. 있으면 열차 시간표를 새로 받는다(timetable.py)
@@ -94,7 +94,7 @@ def get_settings() -> Settings:
         guild_id=guild_id,
         admin_ids=admin_ids,
         admin_errors=admin_errors + guild_errors,
-        public_base_url=env("PUBLIC_BASE_URL", "http://localhost:12971").strip().rstrip("/"),
+        public_base_url=env("PUBLIC_BASE_URL", "http://localhost:14371").strip().rstrip("/"),
         session_secret=env("SESSION_SECRET", "").strip(),
         telegram_token=env("TELEGRAM_BOT_TOKEN", "").strip(),
         data_go_kr_key=env("DATA_GO_KR_KEY", "").strip(),
