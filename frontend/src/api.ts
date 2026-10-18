@@ -92,8 +92,6 @@ export interface Health {
   title: string
   reasons: { label: string; value: string }[]
   notes: { label: string; value: string }[] // 등급과 무관한 안내(노선 공유 등)
-  errors1h: number
-  failRate1h: number
 }
 
 export type NodeStatus = 'online' | 'offline' | 'stopped' | 'cooldown' | 'blocked' | 'version'
@@ -116,8 +114,6 @@ export interface NodeInfo {
 
 export interface Overview {
   groups: number
-  cycleSeconds: number
-  lastCycle: number | null
   nextCycle: number | null
 }
 
@@ -135,7 +131,7 @@ export interface Config {
 
 // 역 선택 지도 데이터(백엔드 stations.json, boundaries.json)
 export interface StationMapData {
-  stations: { name: string; lat: number; lon: number; label: 'r' | 'l' | 't' | 'b'; major?: boolean }[]
+  stations: { name: string; lat: number; lon: number; label: 'r' | 'l' | 't' | 'b' }[]
   lines: string[][]
   provinces: string // 해안선·도 경계 SVG path
   metros: string // 광역시·세종 경계 SVG path
@@ -274,13 +270,6 @@ export function useConfig(): Config {
 
 export const groupOf = (config: Config, type: string) =>
   config.trainGroups.find((g) => g.types.includes(type))?.name ?? '기타'
-
-// 감시 구간이 걸친 날짜들(조회는 날짜 단위로 묶인다)
-export function watchDates(start: string, end: string) {
-  const out: string[] = []
-  for (let d = dayjs(start).startOf('day'); !d.isAfter(dayjs(end), 'day'); d = d.add(1, 'day')) out.push(d.format('YYYY-MM-DD'))
-  return out
-}
 
 // 열차의 출발·도착 일시
 export function trainTimes(t: Train) {

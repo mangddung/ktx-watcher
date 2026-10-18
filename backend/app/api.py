@@ -19,6 +19,7 @@ from app.health import compute as compute_health
 from app.logs import ring
 from app.models import Channel, Node, Watch, WatchSeen
 from app.notify import WEBHOOK_PREFIXES, ChannelGone, SendFailed
+from app.scheduler import ARR_LOOKBACK
 from app.stations import SEAT_CLASSES, STATION_MAP, TRAIN_GROUPS
 from app.state import state
 
@@ -194,7 +195,7 @@ async def search(body: SearchIn):
     if not 1 <= body.passengers <= 9:
         raise service.Invalid("인원수는 1~9명입니다.")
     now = now_kst()
-    lookback = timedelta(hours=6) if body.basis == "arr" else timedelta(0)
+    lookback = ARR_LOOKBACK if body.basis == "arr" else timedelta(0)
     at = (lambda t: t.dep_at) if body.basis == "dep" else (lambda t: t.arr_at)
 
     # 먼저 시간표(좌석 모름)를 보내고, 코레일 한 페이지(10편)를 받을 때마다 SSE 한 건으로 보낸다.

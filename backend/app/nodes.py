@@ -1,4 +1,4 @@
-"""조회 워커. 중앙(로컬 워커)과 원격 노드가 코레일 조회를 나눠 맡는다(NODE_PLAN.md).
+"""조회 워커. 중앙(로컬 워커)과 원격 노드가 코레일 조회를 나눠 맡는다.
 
 워커마다 연속 실패·쿨다운·차단 의심을 따로 센다. 노선(출발역, 도착역)은 assign 으로 워커에 배정한다.
 원격 노드는 /api/node/poll 로 잡을 기다렸다가 /api/node/result 로 결과를 보낸다(노드가 가져가는 방식이라 노드에 포트가 필요 없다).
@@ -95,7 +95,6 @@ class RemoteWorker(Worker):
 
     def __init__(self, node_id: int, name: str) -> None:
         super().__init__()
-        self.node_id = node_id
         self.key = f"node:{node_id}"
         self.name = name
         self.version: str | None = None

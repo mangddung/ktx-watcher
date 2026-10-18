@@ -1,4 +1,4 @@
-"""원격 조회 노드. `python -m app.node` 로 띄운다(NODE_PLAN.md).
+"""원격 조회 노드. `python -m app.node` 로 띄운다.
 
 중앙에 poll 해서 잡(조회 묶음 하나)을 받고, 이 PC 의 IP 로 코레일을 조회해 결과를 돌려준다.
 상태가 없다: DB·Discord·설정 검사 없이 env 4개만 쓴다. 중앙이 재시작해도 다시 poll 하면 이어진다.
