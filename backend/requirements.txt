@@ -1,4 +1,4 @@
-# 전체 의존성을 버전 고정한다(배포 2주 이상 지난 버전, OSV 취약점 확인 2026-09-25)
+# 전체 의존성을 버전 고정한다(배포 2주 이상 지난 버전, OSV 취약점 확인 2026-10-18)
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
 aiosignal==1.4.0
@@ -19,9 +19,9 @@ greenlet==3.5.5
 h11==0.16.0
 idna==3.19
 itsdangerous==2.2.0
-Mako==1.4.1
+Mako==1.4.3
 MarkupSafe==3.0.3
-multidict==6.8.0
+multidict==6.9.1
 propcache==0.5.2
 pycparser==3.0
 pycryptodome==3.23.0
