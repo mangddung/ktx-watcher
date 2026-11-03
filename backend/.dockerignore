@@ -5,3 +5,5 @@ __pycache__
 data/
 .env
 tests/
+**/__pycache__
+**/.env.*
